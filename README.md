@@ -45,18 +45,18 @@ tools/          serve_only.py / probe*.py 验证脚本
 ## 开发运行（源码态）
 
 ```powershell
-# 直接运行（需要 pywebview + markdown + pygments，已在本机 anaconda 环境）
-& "D:\anaconda3\python.exe" -m inkwell "tests\sample.md"
+# 直接运行（需 Python 3.12，并装好 pywebview + markdown + pygments）
+python -m inkwell "tests\sample.md"
 
 # 仅起服务器、用浏览器看前端
-& "D:\anaconda3\python.exe" tools\serve_only.py "tests\sample.md"   # http://127.0.0.1:8799/
+python tools\serve_only.py "tests\sample.md"   # http://127.0.0.1:8799/
 ```
 
 ## 构建与安装
 
 ```powershell
 # 1) 打包成 dist\Inkwell\（onedir，约 1~200MB，含 WebView2/.NET 依赖）
-& "D:\anaconda3\python.exe" build.py
+python build.py
 
 # 2) 安装：清理旧版 MarkdownReader/MDReader → 拷到 %LOCALAPPDATA%\Programs\Inkwell
 #    → 注册 .md/.markdown 默认打开方式为 Inkwell → 建开始菜单快捷方式
