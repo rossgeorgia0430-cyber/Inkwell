@@ -32,7 +32,7 @@
   --accent-soft: rgba(217,119,87,.15);
   --code-bg: #f7f6f1;
   --code-border: #eceae1;
-  --inline-code-bg: #efece4;
+  --inline-code-bg: #ebe9e4;
   --inline-code-fg: #3a3a36;
   --mark: #ffe3a3;
   --mark-current: #f5b54a;
@@ -62,7 +62,7 @@
   --accent-soft: rgba(217,119,87,.22);
   --code-bg: #1f1e1d;
   --code-border: #343330;
-  --inline-code-bg: #38362f;
+  --inline-code-bg: #3a3936;
   --inline-code-fg: #e7e4da;
   --mark: #6b5320;
   --mark-current: #b9862b;
@@ -245,16 +245,16 @@ button { font-family: inherit; }
 .article-wrap { min-height: 0; }
 .article {
   width: 100%;
-  max-width: 78ch;
+  /* 自适应页宽：随窗口伸缩——小窗填满，宽屏放宽到 ~84rem（代码块更宽敞），
+     上限保证正文行长仍可读。width:100% 确保任何窗口都不会横向溢出。 */
+  max-width: clamp(46rem, 76vw, 84rem);
   margin: 0 auto;
-  padding: clamp(20px, 3.4vw, 52px) clamp(18px, 3.4vw, 50px) 140px;
+  padding: clamp(20px, 3vw, 48px) clamp(18px, 3vw, 46px) 140px;
   font-size: var(--reader-font);
   line-height: 1.7;
   color: var(--text);
   word-wrap: break-word;
 }
-@media (min-width: 1600px) { .article { max-width: 84ch; } }
-@media (min-width: 2100px) { .article { max-width: 92ch; } }
 
 /* 标题 */
 .article h1, .article h2, .article h3,
@@ -312,14 +312,13 @@ button { font-family: inherit; }
 .article th { background: var(--surface); font-weight: 650; }
 .article tr:nth-child(even) td { background: var(--surface); }
 
-/* 行内代码 —— Claude 风格：中性浅底、发丝描边、文字色不变红 */
+/* 行内代码 —— Claude Desktop 风格：扁平中性灰底、无描边、文字色不变红 */
 .article code {
   font-family: var(--font-mono);
-  font-size: .875em;
+  font-size: .9em;
   background: var(--inline-code-bg);
   color: var(--inline-code-fg);
-  padding: .1em .36em;
-  border: 1px solid var(--code-border);
+  padding: .12em .42em;
   border-radius: 5px;
   word-break: break-word;
 }
@@ -517,7 +516,9 @@ mark.search-hit.current { background: var(--mark-current); color: #1c1300; }
 .app.drawer.sidebar-open .sidebar { transform: translateX(0); }
 .app.drawer.sidebar-open ~ .scrim,
 .window .app.drawer.sidebar-open + .scrim { opacity: 1; pointer-events: auto; }
-.app.drawer { grid-template-columns: 0 minmax(0,1fr); }
+/* 抽屉模式：侧栏 absolute 脱离网格流，正文用单列铺满整窗（否则 .main 会落进
+   遗留的 0 宽轨道而塌缩成 ~0 —— 即小窗口下正文不自适应的根因）。 */
+.app.drawer { grid-template-columns: minmax(0,1fr); }
 
 /* 侧栏拖拽改变宽度的手柄 */
 .sidebar-resizer {
