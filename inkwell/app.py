@@ -257,16 +257,36 @@ class Api:
         except Exception:
             pass
 
-    def win_toggle_maximize(self):
-        # 直接读原生窗口实际状态（避免拖动还原后本地标志位失同步）
+    def _apply_maximized_bounds(self):
+        """把窗体 MaximizedBounds 设为「当前显示器」的工作区（排除任务栏）。
+        无边框窗体（FormBorderStyle.None）在高 DPI 缩放显示器上，WinForms 默认算出的
+        最大化尺寸会出错——典型表现就是「只铺到半截屏 / 盖住任务栏」。显式给定
+        MaximizedBounds 后，由 WM_GETMINMAXINFO 强制最大化为精确的工作区矩形。
+        必须在 UI 线程调用（WinForms 属性跨线程赋值会抛异常）。"""
         try:
+            from System.Windows.Forms import Screen
+            from System.Drawing import Rectangle
             form = self._window.native
-            if int(form.WindowState) == 2:   # FormWindowState.Maximized
-                self._window.restore()
-            else:
-                self._window.maximize()
+            wa = Screen.FromControl(form).WorkingArea
+            form.MaximizedBounds = Rectangle(wa.X, wa.Y, wa.Width, wa.Height)
         except Exception:
             pass
+
+    def win_toggle_maximize(self):
+        # 最大化 / 还原。最大化前按「当前显示器」工作区设定 MaximizedBounds，
+        # 确保铺满整屏（高 DPI 下也不会只到半截），且不盖任务栏；保留原生 Snap / 拖回还原。
+        def fn():
+            try:
+                from System.Windows.Forms import FormWindowState
+                form = self._window.native
+                if form.WindowState == FormWindowState.Maximized:
+                    form.WindowState = FormWindowState.Normal
+                else:
+                    self._apply_maximized_bounds()
+                    form.WindowState = FormWindowState.Maximized
+            except Exception:
+                pass
+        self._ui_invoke(fn)
 
     def win_close(self):
         try:
@@ -290,11 +310,13 @@ class Api:
                 pass
 
     def init_native_chrome(self):
-        """窗口显示后（UI 线程）调用一次：开启原生缩放 + Snap 资格。"""
+        """窗口显示后调用一次：开启原生缩放 + Snap 资格，并校正最大化边界（含拖到屏幕
+        顶部的 Aero Snap 最大化）。MaximizedBounds 是 WinForms 属性，须在 UI 线程设定。"""
         try:
             _enable_native_chrome(self._hwnd())
         except Exception:
             pass
+        self._ui_invoke(self._apply_maximized_bounds)
 
     def win_native_drag(self):
         """从自绘标题栏发起原生窗口移动 → 支持拖到屏幕边缘 Snap 并列 / 拖回还原。"""

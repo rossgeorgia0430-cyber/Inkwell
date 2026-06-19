@@ -573,7 +573,7 @@
   // ============================================================
   // 字号缩放：Ctrl + 鼠标滚轮 调整正文字号（em 体系下整体自适应），持久化
   // ============================================================
-  var FONT_MIN = 10, FONT_MAX = 26, FONT_DEFAULT = 13.5;
+  var FONT_MIN = 10, FONT_MAX = 26, FONT_DEFAULT = 15;
   function readerFont() {
     var v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--reader-font"));
     return isNaN(v) ? FONT_DEFAULT : v;

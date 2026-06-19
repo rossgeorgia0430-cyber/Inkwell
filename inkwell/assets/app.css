@@ -11,7 +11,7 @@
   --font-sans: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
   --speed: .18s;
-  --reader-font: 13.5px;   /* 正文字号（Ctrl+滚轮缩放、localStorage 持久化）默认更精致 */
+  --reader-font: 15px;   /* 正文字号（Ctrl+滚轮缩放、localStorage 持久化）；默认基准（约 +10%） */
 }
 
 /* ---------- 主题：浅色（Claude 暖纸感中性 + 极少量陶土橘）---------- */
