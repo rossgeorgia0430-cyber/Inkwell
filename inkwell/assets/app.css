@@ -1,0 +1,581 @@
+/* ============================================================
+   Inkwell — 全局样式
+   设计系统（CSS 变量）+ 无边框标题栏 + 自适应 Grid + 排版 + 代码/公式/搜索
+   ============================================================ */
+
+:root {
+  --tb-h: 44px;
+  --sidebar-w: 270px;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --font-sans: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
+  --speed: .18s;
+  --reader-font: 13.5px;   /* 正文字号（Ctrl+滚轮缩放、localStorage 持久化）默认更精致 */
+}
+
+/* ---------- 主题：浅色（Claude 暖纸感中性 + 极少量陶土橘）---------- */
+:root, [data-theme="light"] {
+  --bg: #ffffff;             /* 阅读区（内容更亮） */
+  --sidebar-bg: #efeee7;     /* 目录栏：暖中性灰，略加重于内容 */
+  --surface: #f4f3ee;        /* 代码头 / 引用底 */
+  --surface-2: #ebe9e1;      /* hover / 激活 */
+  --elevated: #ffffff;
+  --text: #141413;           /* 暖近黑（非纯黑） */
+  --text-soft: #3d3d3a;
+  --muted: #73726c;
+  --faint: #a3a199;
+  --border: #e7e4db;
+  --border-strong: #d8d4c8;
+  --accent: #d97757;         /* Anthropic 陶土橘——仅极少量使用 */
+  --accent-hover: #c6613f;
+  --accent-soft: rgba(217,119,87,.15);
+  --code-bg: #f7f6f1;
+  --code-border: #eceae1;
+  --inline-code-bg: #efece4;
+  --inline-code-fg: #3a3a36;
+  --mark: #ffe3a3;
+  --mark-current: #f5b54a;
+  --var-hl: rgba(217,119,87,.18);
+  --var-hl-current: rgba(245,181,74,.6);
+  --shadow: 0 10px 30px rgba(60,55,45,.10);
+  --scroll: #dcd8cc;
+  --scroll-hover: #c7c1b1;
+  --selection: rgba(217,119,87,.16);
+}
+
+/* ---------- 主题：深色（Claude 暖炭灰；内容比侧栏更亮）---------- */
+[data-theme="dark"] {
+  --bg: #30302e;             /* 阅读区炭灰 */
+  --sidebar-bg: #262624;     /* 目录栏更深 */
+  --surface: #2a2a28;
+  --surface-2: #3a3a37;
+  --elevated: #1f1e1d;
+  --text: #f5f4ef;           /* 暖近白 */
+  --text-soft: #c2c0b6;
+  --muted: #9c9a92;
+  --faint: #76746c;
+  --border: #43423d;
+  --border-strong: #524f48;
+  --accent: #d97757;
+  --accent-hover: #e08a6c;
+  --accent-soft: rgba(217,119,87,.22);
+  --code-bg: #1f1e1d;
+  --code-border: #343330;
+  --inline-code-bg: #38362f;
+  --inline-code-fg: #e7e4da;
+  --mark: #6b5320;
+  --mark-current: #b9862b;
+  --var-hl: rgba(217,119,87,.26);
+  --var-hl-current: rgba(245,181,74,.5);
+  --shadow: 0 14px 40px rgba(0,0,0,.5);
+  --scroll: #45433d;
+  --scroll-hover: #57544c;
+  --selection: rgba(217,119,87,.28);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+button { font-family: inherit; }
+
+/* ============================================================
+   窗口骨架：标题栏 + Grid（侧栏 | 正文）
+   ============================================================ */
+.window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+}
+
+.titlebar {
+  height: var(--tb-h);
+  flex: 0 0 var(--tb-h);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 0 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  position: relative;
+  z-index: 30;
+}
+.tb-cluster { display: flex; align-items: center; gap: 2px; }
+.tb-drag {
+  flex: 1 1 auto;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+.tb-title {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60vw;
+  pointer-events: none;
+}
+.brand {
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: .2px;
+  color: var(--text);
+  padding: 0 6px 0 2px;
+}
+
+/* 图标按钮 */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  border: none; background: transparent; color: var(--text-soft);
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: background var(--speed), color var(--speed);
+}
+.icon-btn.sm { width: 28px; height: 28px; }
+.icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.icon-btn:active { transform: translateY(.5px); }
+.icon-btn.active { background: var(--surface-2); color: var(--text); }
+.ico { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.icon-btn.sm .ico { width: 17px; height: 17px; }
+
+/* 主题图标显隐 */
+.ico-moon { display: none; }
+[data-theme="dark"] .ico-sun { display: none; }
+[data-theme="dark"] .ico-moon { display: inline; }
+
+/* 窗口控制按钮 */
+.win-controls { display: flex; align-items: center; margin-left: 6px; }
+.win-btn {
+  width: 40px; height: var(--tb-h);
+  border: none; background: transparent; color: var(--muted);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--speed), color var(--speed);
+}
+.win-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; }
+.win-btn:hover { background: var(--surface-2); color: var(--text); }
+.win-close:hover { background: #e5484d; color: #fff; }
+
+/* Grid 主体 */
+.app {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.app.sidebar-hidden { grid-template-columns: 0 minmax(0, 1fr); }
+
+/* ============================================================
+   侧栏 / 目录
+   ============================================================ */
+.sidebar {
+  background: var(--sidebar-bg);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  padding: 14px 10px 40px;
+  /* 发丝右边线（inset 阴影，不占几何宽度，收起时不会留缝）+ 少量投影 */
+  box-shadow: inset -1px 0 0 var(--border), 2px 0 11px rgba(50, 45, 35, .055);
+  transition: transform var(--speed) ease;
+}
+.sidebar-head {
+  font-size: 11px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+  padding: 4px 10px 10px;
+}
+/* 收起目录：彻底隐藏，不留发丝缝/投影 */
+.app.sidebar-hidden .sidebar { pointer-events: none; box-shadow: none; }
+
+/* TOC（markdown toc 扩展产出 .toc > ul > li > a） */
+.toc ul { list-style: none; margin: 0; padding: 0; }
+.toc > ul > li { margin: 0; }
+.toc li { position: relative; }
+.toc a {
+  display: block;
+  padding: 5px 10px;
+  margin: 1px 0;
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  border-left: 2px solid transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--speed), color var(--speed);
+}
+.toc a:hover { background: var(--surface-2); color: var(--text); }
+.toc a.active {
+  color: var(--text);
+  background: var(--surface-2);
+  border-left-color: var(--accent);   /* 仅一条细陶土橘竖线作激活标记 */
+  font-weight: 600;
+}
+/* 层级缩进 */
+.toc ul ul a { padding-left: 24px; font-size: 13px; }
+.toc ul ul ul a { padding-left: 38px; font-size: 12.5px; color: var(--faint); }
+.toc ul ul ul ul a { padding-left: 52px; }
+
+/* ============================================================
+   正文区
+   ============================================================ */
+.main {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+.article-wrap { min-height: 0; }
+.article {
+  width: 100%;
+  max-width: 78ch;
+  margin: 0 auto;
+  padding: clamp(20px, 3.4vw, 52px) clamp(18px, 3.4vw, 50px) 140px;
+  font-size: var(--reader-font);
+  line-height: 1.7;
+  color: var(--text);
+  word-wrap: break-word;
+}
+@media (min-width: 1600px) { .article { max-width: 84ch; } }
+@media (min-width: 2100px) { .article { max-width: 92ch; } }
+
+/* 标题 */
+.article h1, .article h2, .article h3,
+.article h4, .article h5, .article h6 {
+  color: var(--text);
+  font-weight: 680;
+  line-height: 1.3;
+  margin: 1.5em 0 .6em;
+  scroll-margin-top: 16px;
+}
+.article h1 { font-size: 2em; margin-top: .2em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+.article h2 { font-size: 1.55em; padding-bottom: .25em; border-bottom: 1px solid var(--border); }
+.article h3 { font-size: 1.28em; }
+.article h4 { font-size: 1.1em; }
+.article h5 { font-size: 1em; color: var(--text-soft); }
+.article h6 { font-size: .92em; color: var(--muted); }
+
+.article p { margin: .7em 0; }
+.article a { color: var(--text-soft); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px; }
+.article a:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
+.article ul, .article ol { padding-left: 1.5em; margin: .7em 0; }
+.article li { margin: .3em 0; }
+.article li::marker { color: var(--faint); }
+
+.article blockquote {
+  margin: 1em 0;
+  padding: .4em 1.1em;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-soft);
+}
+.article blockquote p { margin: .4em 0; }
+
+.article hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+
+.article img { max-width: 100%; height: auto; border-radius: var(--radius-sm); }
+
+/* 表格 */
+.article table {
+  border-collapse: collapse;
+  margin: 1.1em 0;
+  width: auto;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+  font-size: .95em;
+}
+.article th, .article td {
+  border: 1px solid var(--border-strong);
+  padding: 8px 13px;
+  text-align: left;
+}
+.article th { background: var(--surface); font-weight: 650; }
+.article tr:nth-child(even) td { background: var(--surface); }
+
+/* 行内代码 —— Claude 风格：中性浅底、发丝描边、文字色不变红 */
+.article code {
+  font-family: var(--font-mono);
+  font-size: .875em;
+  background: var(--inline-code-bg);
+  color: var(--inline-code-fg);
+  padding: .1em .36em;
+  border: 1px solid var(--code-border);
+  border-radius: 5px;
+  word-break: break-word;
+}
+.article a code { color: inherit; }
+.article h1 code, .article h2 code, .article h3 code,
+.article h4 code, .article h5 code, .article h6 code { font-size: .9em; }
+
+/* ============================================================
+   代码块
+   ============================================================ */
+.article .codehilite,
+.article pre {
+  position: relative;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  margin: 1.1em 0;
+  overflow: hidden;
+}
+.article .codehilite pre,
+.article pre {
+  margin: 0;
+  border: none;
+  background: transparent;
+}
+.article .codehilite pre,
+.article pre > code,
+.article pre {
+  font-family: var(--font-mono);
+  font-size: .86em;
+  line-height: 1.6;
+}
+.article .codehilite pre {
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+/* 不在 codehilite 容器内的裸 pre */
+.article pre:not(.codehilite *) { padding: 0; }
+.article pre code {
+  display: block;
+  padding: 14px 16px;
+  overflow-x: auto;
+  background: transparent;
+  color: var(--text);
+  font-size: .86em;
+}
+/* 代码块里的 code 不要行内 code 的样式 */
+.article .codehilite code,
+.article pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* 带文件路径的代码块包装头部 */
+.code-block-wrapper {
+  position: relative;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  margin: 1.1em 0;
+  overflow: hidden;
+}
+.code-block-wrapper .codehilite,
+.code-block-wrapper pre {
+  border: none; border-radius: 0; margin: 0; background: transparent;
+}
+.code-block-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 8px 5px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--code-border);
+  font-size: 12px;
+  min-height: 34px;
+}
+.code-lang {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.code-lang-plain { color: var(--faint); }
+.code-filepath {
+  color: var(--faint); font-family: var(--font-mono); font-size: 12px;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 复制按钮（Claude 风格幽灵按钮 + 图标） */
+.code-copy-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; background: transparent;
+  color: var(--muted); font-size: 12px;
+  padding: 4px 9px; border-radius: 6px;
+  cursor: pointer; transition: background var(--speed), color var(--speed);
+  white-space: nowrap;
+}
+.code-copy-btn .copy-ico { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.code-copy-btn:hover { background: var(--surface-2); color: var(--text); }
+.code-copy-btn.copied { color: var(--accent); }
+
+/* 公式复制按钮 */
+.math-copy-btn-base {}
+
+/* 裸代码块（缩进代码，无头部）右上角浮动复制按钮 */
+.code-copy-float {
+  position: absolute; top: 8px; right: 8px;
+  border: 1px solid var(--border); background: var(--elevated);
+  color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 6px;
+  cursor: pointer; opacity: 0; transition: all var(--speed); z-index: 5; white-space: nowrap;
+}
+.code-copy-float:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
+.code-copy-float.copied { color: var(--accent); border-color: var(--accent); }
+.article .codehilite:hover .code-copy-float,
+.article pre:hover .code-copy-float { opacity: 1; }
+
+/* 双击高亮 */
+.var-highlight { background: var(--var-hl); border-radius: 3px; }
+.var-highlight.current { background: var(--var-hl-current); }
+
+/* ============================================================
+   数学公式
+   ============================================================ */
+.math-block {
+  position: relative;
+  margin: 1.2em 0;
+  padding: 6px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.math-block .katex-display { margin: .3em 0; }
+.math-inline { white-space: nowrap; }
+.katex { font-size: 1.08em; }
+
+.math-copy-btn {
+  position: absolute; top: 4px; right: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--elevated);
+  color: var(--text-soft);
+  font-size: 11.5px; padding: 2px 9px;
+  border-radius: 6px; cursor: pointer;
+  opacity: 0; transition: all var(--speed); z-index: 4;
+}
+.math-block:hover .math-copy-btn { opacity: 1; }
+.math-copy-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
+.math-copy-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ============================================================
+   搜索栏
+   ============================================================ */
+.searchbar {
+  position: absolute;
+  top: calc(var(--tb-h) + 12px);
+  right: 18px;
+  z-index: 40;
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 6px 12px;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.searchbar.open { display: flex; }
+.search-ico { width: 17px; height: 17px; color: var(--muted); flex: none; }
+#searchInput {
+  border: none; outline: none; background: transparent;
+  color: var(--text); font-size: 14px; width: 230px; padding: 4px 2px;
+}
+#searchInput::placeholder { color: var(--faint); }
+.search-count { font-size: 12px; color: var(--muted); min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
+
+mark.search-hit { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+mark.search-hit.current { background: var(--mark-current); color: #1c1300; }
+
+/* ============================================================
+   抽屉模式（窄窗口侧栏浮层）
+   ============================================================ */
+.scrim {
+  position: absolute; inset: var(--tb-h) 0 0 0;
+  background: rgba(10,14,20,.42);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--speed); z-index: 18;
+}
+.app.drawer .sidebar {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: var(--sidebar-w); max-width: 84vw;
+  z-index: 20;
+  transform: translateX(-100%);
+  box-shadow: var(--shadow);
+}
+.app.drawer.sidebar-open .sidebar { transform: translateX(0); }
+.app.drawer.sidebar-open ~ .scrim,
+.window .app.drawer.sidebar-open + .scrim { opacity: 1; pointer-events: auto; }
+.app.drawer { grid-template-columns: 0 minmax(0,1fr); }
+
+/* 侧栏拖拽改变宽度的手柄 */
+.sidebar-resizer {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: calc(var(--sidebar-w) - 3px);
+  width: 6px;
+  cursor: col-resize;
+  z-index: 25;
+}
+.app.sidebar-hidden .sidebar-resizer,
+.app.drawer .sidebar-resizer { display: none; }
+
+/* ============================================================
+   滚动条
+   ============================================================ */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* 选区 */
+::selection { background: var(--selection); }
+
+/* ============================================================
+   无边框窗口：原生缩放手柄（mousedown → Win32 原生缩放，8 向 + Snap 预览）
+   细边贴窗口最外缘；左右边落在标题栏按钮的内边距死区，顶边仅最外 4px。
+   ============================================================ */
+.resize-handle { position: fixed; z-index: 50; }
+.rh-n  { top: 0; left: 9px; right: 9px; height: 4px; cursor: ns-resize; }
+.rh-s  { bottom: 0; left: 9px; right: 9px; height: 4px; cursor: ns-resize; }
+.rh-w  { left: 0; top: 9px; bottom: 9px; width: 4px; cursor: ew-resize; }
+.rh-e  { right: 0; top: 9px; bottom: 9px; width: 4px; cursor: ew-resize; }
+.rh-nw { top: 0; left: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 51; }
+.rh-ne { top: 0; right: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 51; }
+.rh-sw { bottom: 0; left: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 51; }
+.rh-se { bottom: 0; right: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 51; }
+
+/* 后退/前进按钮：无历史时禁用 */
+.icon-btn:disabled { opacity: .3; cursor: default; pointer-events: none; }
+
+/* 轻量 toast 提示 */
+.toast {
+  position: fixed; left: 50%; bottom: 28px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--text); color: var(--bg);
+  font-size: 13px; line-height: 1.4; padding: 8px 16px;
+  border-radius: 9px; box-shadow: var(--shadow);
+  opacity: 0; pointer-events: none; max-width: 72vw;
+  transition: opacity var(--speed), transform var(--speed); z-index: 80;
+}
+.toast.show { opacity: .96; transform: translateX(-50%) translateY(0); }
+
+/* 欢迎/空态留白 */
+.article > :first-child { margin-top: 0; }
