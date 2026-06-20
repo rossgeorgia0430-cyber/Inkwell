@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""验证表格复制：整表选择 / 片段选择(空粘贴 bug) 都应得到完整 <table>+TSV；单元格内选文不应被放大成整表。"""
+"""验证复制净化：表格结构/TSV、公式还原为 LaTeX，代码块去除着色 UI。"""
 import sys, os, time, json, traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import webview
@@ -23,10 +23,29 @@ TEST_JS = r"""
   var table=document.querySelector('#content table');
   var tbody=table.querySelector('tbody');
   var td=table.querySelector('tbody td');
+  var inlineMath=document.querySelector('#content .math-inline');
+  var blockMath=document.querySelector('#content .math-block');
+  var codeBlock=document.querySelector('#content .code-block-wrapper');
+  var inlineOut=run(function(r){ r.selectNode(inlineMath); });
+  var blockOut=run(function(r){ r.selectNode(blockMath); });
+  var codeOut=run(function(r){ r.selectNode(codeBlock); });
   return {
     whole:   run(function(r){ r.selectNode(table); }),
     fragment:run(function(r){ r.selectNodeContents(tbody); }),
-    cellText:run(function(r){ r.selectNodeContents(td); })
+    cellText:run(function(r){ r.selectNodeContents(td); }),
+    inlineMath:inlineOut,
+    blockMath:blockOut,
+    code:codeOut,
+    details:{
+      inlinePlain:inlineOut.plainHead,
+      blockPlain:blockOut.plainHead,
+      codePlain:codeOut.plainHead,
+      codeHasUi:/code-copy|code-block-header|copy-action/i.test(codeOut.html),
+      codeHasPygments:/class=|<span/i.test(codeOut.html),
+      inlineHandlers:document.querySelectorAll('#content [onclick]').length,
+      copyActions:document.querySelectorAll('#content [data-copy-action]').length,
+      leakedGlobals:(typeof window.copyCode !== 'undefined' || typeof window.copyLatex !== 'undefined')
+    }
   };
 })()
 """
@@ -47,6 +66,14 @@ def job(win):
             "fragment_has_table":out["fragment"]["hasTable"],     # 关键：片段也修复成整表
             "fragment_has_tabs": out["fragment"]["tabs"]>0,
             "celltext_no_table": out["cellText"]["hasTable"]==False,  # 关键：选单元格文字不放大
+            "inline_math_to_latex": "$E = mc^2$" in out["details"]["inlinePlain"],
+            "block_math_to_latex": "$$\\int_" in out["details"]["blockPlain"],
+            "code_keeps_text": "USTRUCT(BlueprintType)" in out["details"]["codePlain"],
+            "code_strips_ui": out["details"]["codeHasUi"] == False,
+            "code_strips_pygments": out["details"]["codeHasPygments"] == False,
+            "copy_uses_delegation": (out["details"]["inlineHandlers"] == 0
+                                     and out["details"]["copyActions"] >= 2
+                                     and out["details"]["leakedGlobals"] == False),
         }
         res["all_pass"]=all(res["checks"].values())
         res["stage"]="ok"

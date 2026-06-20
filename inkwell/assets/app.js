@@ -50,6 +50,11 @@
     fallbackCopy(text);
   }
 
+  function savePreference(key, value) {
+    var a = api();
+    if (a && a.set_preference) a.set_preference(key, String(value));
+  }
+
   // ============================================================
   // 1) 公式渲染：直接用 data-latex 调 katex.render（不扫描正文）
   // ============================================================
@@ -75,7 +80,7 @@
     });
   }
 
-  // 复制单条公式的 LaTeX（行内 onclick 调用，需挂到 window）
+  // 复制单条公式的 LaTeX（由正文容器统一事件委托）
   function copyLatex(btn) {
     var host = btn.closest("[data-latex]");
     if (!host) return;
@@ -83,7 +88,6 @@
     writeClipboard(tex);
     flash(btn, "已复制");
   }
-  window.copyLatex = copyLatex;
 
   // ============================================================
   // 2) 飞书无底色复制：拦截 copy，净化选区后写 text/html + text/plain
@@ -149,16 +153,19 @@
 
   function sanitizeForCopy(holder) {
     // step 0: 把渲染后的公式替换回 $tex$ / $$tex$$ 纯文本
-    holder.querySelectorAll(".math-block, .katex-display").forEach(function (k) {
-      var host = k.classList.contains("math-block") ? k : (k.closest(".math-block") || k);
-      var tex = texFromKatex(k);
-      host.replaceWith(document.createTextNode(tex != null ? ("$$" + tex + "$$") : (k.textContent || "")));
+    // holder 本身没有挂入 document，因此不能用 isConnected 判断克隆节点是否有效。
+    holder.querySelectorAll(".math-block[data-latex], .math-inline[data-latex]").forEach(function (host) {
+      var tex = host.getAttribute("data-latex");
+      var marker = host.classList.contains("math-block") ? "$$" : "$";
+      host.replaceWith(document.createTextNode(marker + tex + marker));
     });
-    holder.querySelectorAll(".math-inline, .katex").forEach(function (k) {
-      if (!k.isConnected) return;
-      var host = k.classList.contains("math-inline") ? k : (k.closest(".math-inline") || k);
+    // 部分选区可能只克隆到 KaTeX 内部节点，用 annotation 作为后备。
+    holder.querySelectorAll(".katex-display, .katex").forEach(function (k) {
+      if (!holder.contains(k)) return;
+      var host = k.classList.contains("katex-display") ? k : (k.closest(".katex-display") || k);
       var tex = texFromKatex(k);
-      host.replaceWith(document.createTextNode(tex != null ? ("$" + tex + "$") : (k.textContent || "")));
+      var marker = host.classList.contains("katex-display") ? "$$" : "$";
+      host.replaceWith(document.createTextNode(tex != null ? (marker + tex + marker) : (k.textContent || "")));
     });
     // step 1: 删除纯 UI 元素
     holder.querySelectorAll(".code-copy-btn, .code-copy-float, .math-copy-btn, .code-block-header")
@@ -312,8 +319,6 @@
     writeClipboard(text);
     flash(btn, "已复制");
   }
-  window.copyCode = copyCode;
-
   function addCodeCopyButtons(root) {
     root.querySelectorAll(".codehilite").forEach(function (box) {
       if (box.closest(".code-block-wrapper")) return;        // 已有头部按钮
@@ -321,10 +326,21 @@
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className = "code-copy-float";
+      btn.setAttribute("data-copy-action", "code");
       btn.textContent = "复制";
-      btn.addEventListener("click", function () { copyCode(btn); });
       box.appendChild(btn);
     });
+  }
+
+  function onContentActionClick(e) {
+    var btn = e.target.closest && e.target.closest("[data-copy-action]");
+    if (!btn || !content.contains(btn)) return;
+    var action = btn.getAttribute("data-copy-action");
+    if (action !== "latex" && action !== "code") return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (action === "latex") copyLatex(btn);
+    else copyCode(btn);
   }
 
   // ============================================================
@@ -502,11 +518,18 @@
     var drawer = window.innerWidth < 760;
     app.classList.toggle("drawer", drawer);
     if (!drawer) app.classList.remove("sidebar-open");
+    var a = api();
+    if (a && a.win_is_maximized) {
+      a.win_is_maximized().then(function (maximized) {
+        document.documentElement.classList.toggle("window-maximized", !!maximized);
+      });
+    }
   }
 
-  function setTheme(t) {
+  function setTheme(t, persist) {
     document.documentElement.setAttribute("data-theme", t);
     try { localStorage.setItem("inkwell-theme", t); } catch (e) {}
+    if (persist !== false) savePreference("theme", t);
     var link = $("pygments-style");
     if (link) link.href = "/assets/pygments-" + (t === "dark" ? "dark" : "light") + ".css";
   }
@@ -578,14 +601,16 @@
     var v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--reader-font"));
     return isNaN(v) ? FONT_DEFAULT : v;
   }
-  function setReaderFont(px) {
+  function setReaderFont(px, persist) {
     px = Math.max(FONT_MIN, Math.min(FONT_MAX, Math.round(px * 2) / 2));
     document.documentElement.style.setProperty("--reader-font", px + "px");
     try { localStorage.setItem("inkwell-font", px); } catch (e) {}
+    if (persist !== false) savePreference("font", px);
   }
-  function setupFontZoom() {
-    var saved = parseFloat(localStorage.getItem("inkwell-font"));
-    if (!isNaN(saved)) setReaderFont(saved);
+  function setupFontZoom(preferredFont) {
+    var saved = parseFloat(preferredFont);
+    if (isNaN(saved)) saved = parseFloat(localStorage.getItem("inkwell-font"));
+    if (!isNaN(saved)) setReaderFont(saved, false);
     // Ctrl+滚轮：放大/缩小正文（拦截 WebView2 的整页缩放）
     window.addEventListener("wheel", function (e) {
       if (!e.ctrlKey) return;
@@ -633,7 +658,14 @@
   // ============================================================
   // 文档间跳转：历史栈（后退/前进）+ 正文 .md 链接拦截（支持递归深入）
   // ============================================================
-  var navHistory = [], navIndex = -1;
+  var navHistory = [], navIndex = -1, navGeneration = 0;
+
+  function beginNavigation() { navGeneration += 1; return navGeneration; }
+  function isCurrentNavigation(generation) { return generation === navGeneration; }
+  function samePath(a, b) {
+    if (!a || !b) return false;
+    return String(a).replace(/\//g, "\\").toLowerCase() === String(b).replace(/\//g, "\\").toLowerCase();
+  }
 
   function renderInto(p) {
     if (!p) return false;
@@ -643,6 +675,8 @@
     currentPath = p.path || currentPath;
     setDocTitle(p.title);
     initContent();
+    var a = api();
+    if (p.path && a && a.activate_path) a.activate_path(p.path);
     return true;
   }
 
@@ -661,7 +695,11 @@
   }
 
   function navSaveScroll() {
-    if (navIndex >= 0 && navHistory[navIndex]) navHistory[navIndex].scrollTop = main.scrollTop;
+    // 快速连点前进/后退时 navIndex 可能已指向待加载页，不要把旧页滚动量写错条目。
+    if (navIndex >= 0 && navHistory[navIndex]
+        && samePath(navHistory[navIndex].path, currentPath)) {
+      navHistory[navIndex].scrollTop = main.scrollTop;
+    }
   }
 
   // 前进式跳转（点击链接 / 打开新文件）：截断 forward 分支，压入新条目
@@ -681,7 +719,9 @@
     navSaveScroll();
     navIndex = target;
     var e = navHistory[navIndex];
+    var generation = beginNavigation();
     a.render_path(e.path).then(function (p) {
+      if (!isCurrentNavigation(generation)) return;
       if (p && p.ok === false) toast("文件可能已被移动或删除");
       if (renderInto(p)) scrollAfterLoad(null, e.scrollTop);
       updateNavButtons();
@@ -692,7 +732,9 @@
 
   function navigateToMd(href) {
     var a = api(); if (!a || !a.open_md_link) return;
-    a.open_md_link(href).then(function (p) {
+    var generation = beginNavigation();
+    a.open_md_link(href, currentPath).then(function (p) {
+      if (!isCurrentNavigation(generation)) return;
       if (!p) return;
       if (p.samedoc) { if (p.anchor) { lockSpy(); scrollToHeading(p.anchor); } return; }
       if (p.ok === false) { toast(p.error || ("无法打开 " + href)); return; }
@@ -722,7 +764,10 @@
 
   function openFileDialog() {
     var a = api(); if (!a) return;
-    a.open_dialog().then(function (p) { if (p && p.ok) navTo(p, ""); });
+    var generation = beginNavigation();
+    a.open_dialog().then(function (p) {
+      if (isCurrentNavigation(generation) && p && p.ok) navTo(p, "");
+    });
   }
 
   // 轻量 toast 提示（打开失败等）
@@ -740,7 +785,9 @@
   function applyPayload(p) {
     if (!p || p.cancelled) return;
     if (p.ok === false && !p.content) return;
-    var keep = (p.path && p.path === currentPath) ? main.scrollTop : 0;
+    // watcher 可能在换页期间送达旧文档 payload，绝不允许它覆盖当前页。
+    if (!samePath(p.path, currentPath)) return;
+    var keep = main.scrollTop;
     renderInto(p);
     main.scrollTop = keep;
   }
@@ -761,6 +808,7 @@
     // 文档跳转：后退/前进 + 正文链接拦截
     $("navBack").addEventListener("click", navBack);
     $("navForward").addEventListener("click", navForward);
+    content.addEventListener("click", onContentActionClick);
     content.addEventListener("click", onContentLinkClick);
 
     // 窗口控制（拖动 / 双击最大化由 setupWindowDrag 处理）
@@ -823,10 +871,10 @@
     docTitle = $("docTitle");
     searchBar = $("searchbar"); searchInput = $("searchInput"); searchCount = $("searchCount");
 
-    var t = document.documentElement.getAttribute("data-theme") || "light";
-    setTheme(t);
-
     var bootData = window.__BOOT__ || {};
+    var preferences = bootData.preferences || {};
+    var t = preferences.theme || document.documentElement.getAttribute("data-theme") || "light";
+    setTheme(t, false);
     setDocTitle(bootData.title || "Inkwell");
     // 用初始文档播种跳转历史
     if (bootData.path) {
@@ -839,7 +887,7 @@
     setupResizer();
     setupWindowResize();
     setupWindowDrag();
-    setupFontZoom();
+    setupFontZoom(preferences.font);
     onResize();
     initContent();
     updateNavButtons();

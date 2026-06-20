@@ -47,7 +47,8 @@ README = """Inkwell - 本地 Markdown 阅读器  安装说明
   Windows 安全机制要求你手动确认一次（之后永久生效）：
     方式一：双击任意 .md -> 选择 Inkwell -> 勾选/点击“始终”
     方式二：设置 > 应用 > 默认应用 > 找到 Inkwell -> 把 .md / .markdown 指给它
-  托管（域/Entra/MDM）机器可“右键以管理员身份运行”安装，自动写组策略免点击。
+  安装器不会覆盖现有默认应用；如需组策略部署，请由管理员显式运行
+  install.ps1 -SetDefaultViaPolicy（仅适用于域/Entra/MDM 托管机器）。
 
 【卸载】
   双击  Uninstall-Inkwell.bat

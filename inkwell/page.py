@@ -8,6 +8,7 @@ Inkwell - 页面组装
 
 import html as html_module
 import json
+import secrets
 
 
 # 无边框标题栏 + 侧栏 + 正文 + 搜索覆盖层 的整体骨架
@@ -80,26 +81,48 @@ _SHELL = """
 """
 
 
-def build_page(content_html: str, toc_html: str, title: str, path: str = None) -> str:
+def _script_safe_json(value) -> str:
+    """生成可安全嵌入 script 文本节点的 JSON（阻断 </script> 等提前闭合）。"""
+    return (json.dumps(value, ensure_ascii=False)
+            .replace("&", r"\u0026")
+            .replace("<", r"\u003c")
+            .replace(">", r"\u003e")
+            .replace("\u2028", r"\u2028")
+            .replace("\u2029", r"\u2029"))
+
+
+def build_page(content_html: str, toc_html: str, title: str, path: str = None,
+               preferences=None) -> str:
     """生成完整 HTML 文档字符串。"""
     safe_title = html_module.escape(title or "Inkwell")
-    shell = (_SHELL
-             .replace("__CONTENT__", content_html or "")
-             .replace("__TOC__", toc_html or ""))
+    # 只拆分模板本身，避免正文中恰好出现 __TOC__ / __CONTENT__ 时被二次替换。
+    before_toc, remainder = _SHELL.split("__TOC__", 1)
+    between, after_content = remainder.split("__CONTENT__", 1)
+    shell = (before_toc + (toc_html or "") + between
+             + (content_html or "") + after_content)
     # 初始 payload（标题 + 文档路径），供 JS 设置标题栏 & 播种跳转历史
-    boot = json.dumps({"title": title or "", "path": path or ""}, ensure_ascii=False)
+    boot = _script_safe_json({
+        "title": title or "",
+        "path": path or "",
+        "preferences": preferences or {},
+    })
+    nonce = secrets.token_urlsafe(18)
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
 <title>{safe_title}</title>
-<script>window.__errors=[];window.addEventListener('error',function(e){{window.__errors.push((e.message||'')+' @'+(e.filename||'')+':'+(e.lineno||0));}});</script>
-<script>
+<script nonce="{nonce}">window.__errors=[];window.addEventListener('error',function(e){{window.__errors.push((e.message||'')+' @'+(e.filename||'')+':'+(e.lineno||0));}});</script>
+<script nonce="{nonce}">window.__BOOT__ = {boot};</script>
+<script nonce="{nonce}">
   // 在首帧前应用持久化主题，避免闪烁
   (function() {{
     try {{
-      var t = localStorage.getItem('inkwell-theme') || 'light';
+      var p = (window.__BOOT__ && window.__BOOT__.preferences) || {{}};
+      var t = (p.theme === 'dark' || p.theme === 'light') ? p.theme
+        : (localStorage.getItem('inkwell-theme') || 'light');
       document.documentElement.setAttribute('data-theme', t);
       document.write('<link rel="stylesheet" id="pygments-style" href="/assets/pygments-' + (t === 'dark' ? 'dark' : 'light') + '.css">');
     }} catch (e) {{
@@ -112,7 +135,6 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None) -
 </head>
 <body>
 {shell}
-<script>window.__BOOT__ = {boot};</script>
 <script src="/assets/katex/katex.min.js"></script>
 <script src="/assets/app.js"></script>
 </body>

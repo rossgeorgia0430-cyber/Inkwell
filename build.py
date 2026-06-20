@@ -17,9 +17,11 @@ def regen_assets():
     """重新生成图标与 Pygments 主题，确保资源最新。"""
     for script in ("gen_icon.py", "gen_pygments.py"):
         p = os.path.join(ROOT, script)
-        if os.path.exists(p):
-            print(f"[build] 运行 {script}")
-            subprocess.run([sys.executable, p], cwd=ROOT, check=False)
+        if not os.path.isfile(p):
+            raise FileNotFoundError(f"缺少资源生成脚本：{p}")
+        print(f"[build] 运行 {script}")
+        # 资源生成失败时立即停止，不能继续打出使用旧资源或缺失资源的安装包。
+        subprocess.run([sys.executable, p], cwd=ROOT, check=True)
 
 
 def clean():
@@ -57,7 +59,7 @@ def verify():
                 needles[f] = True
     for name, found in needles.items():
         print(f"[verify] {name}: {'[OK]' if found else '[X] 缺失'}")
-        if not found and name == "WebView2Loader.dll":
+        if not found:
             ok = False
 
     # 资源
@@ -66,16 +68,29 @@ def verify():
         # onedir 下 datas 可能直接在根或 _internal
         alt = glob.glob(os.path.join(DIST, "**", "inkwell", "assets"), recursive=True)
         assets = alt[0] if alt else assets
-    for need in ("app.css", "app.js", "katex/katex.min.js", "pygments-light.css"):
+    for need in (
+        "app.css",
+        "app.js",
+        "icon.ico",
+        "katex/katex.min.css",
+        "katex/katex.min.js",
+        "pygments-light.css",
+        "pygments-dark.css",
+    ):
         p = os.path.join(assets, need.replace("/", os.sep))
-        print(f"[verify] assets/{need}: {'[OK]' if os.path.isfile(p) else '[X]'}")
-        if not os.path.isfile(p):
+        found = os.path.isfile(p) and os.path.getsize(p) > 0
+        print(f"[verify] assets/{need}: {'[OK]' if found else '[X]'}")
+        if not found:
             ok = False
     return ok
 
 
 def main():
-    regen_assets()
+    try:
+        regen_assets()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"[build] 资源生成失败 [X]：{exc}")
+        sys.exit(1)
     clean()
     if not build():
         print("[build] PyInstaller 失败 [X]")

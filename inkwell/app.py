@@ -19,6 +19,7 @@ if sys.stdout is None or sys.stderr is None:
         sys.stderr = _null
 
 import json
+import html as html_module
 import time
 import threading
 import traceback
@@ -36,6 +37,9 @@ _SAFE_OPEN_EXTS = {
     ".htm", ".html", ".mp3", ".wav", ".mp4", ".mov", ".webm",
 }
 _MD_EXTS = {".md", ".markdown", ".mdown", ".mkd"}
+_READABLE_EXTS = _MD_EXTS | {".txt"}
+_MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+_PREFERENCE_KEYS = {"theme", "font"}
 
 import ctypes
 from ctypes import wintypes
@@ -49,10 +53,9 @@ from . import APP_NAME, __version__
 
 
 # ---------------------------------------------------------------------------
-# 原生窗口行为（Win32）：给无边框窗口加上 WS_THICKFRAME 以启用「原生 8 向缩放 +
-# Aero Snap 并列 + 拖回还原」，并用 ReleaseCapture()+SendMessage(WM_NCLBUTTONDOWN)
-# 进入系统自带的移动/缩放模态循环（完全原生手感）。WS_THICKFRAME 对无边框窗口
-# 不会画出可见边框（见 SDL 实现）。所有调用必须 marshal 到 WinForms UI 线程。
+# 原生窗口行为（Win32）：在系统移动/缩放循环期间临时添加 WS_THICKFRAME，启用
+# 「原生 8 向缩放 + Aero Snap 并列 + 拖回还原」；循环退出后立即移除，避免无边框
+# WebView 被非客户区向内挤出一圈空隙。所有调用必须 marshal 到 WinForms UI 线程。
 # ---------------------------------------------------------------------------
 _user32 = ctypes.windll.user32
 _WM_NCLBUTTONDOWN = 0x00A1
@@ -69,10 +72,18 @@ _SWP_NOMOVE = 0x0002
 _SWP_NOSIZE = 0x0001
 _SWP_NOZORDER = 0x0004
 _SWP_NOACTIVATE = 0x0010
+_DWMWA_WINDOW_CORNER_PREFERENCE = 33
+_DWMWA_BORDER_COLOR = 34
+_DWMWCP_DEFAULT = 0
+_DWMWCP_DONOTROUND = 1
+_DWMWA_COLOR_DEFAULT = 0xFFFFFFFF
+_DWMWA_COLOR_NONE = 0xFFFFFFFE
 
 _user32.ReleaseCapture.restype = wintypes.BOOL
 _user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 _user32.SendMessageW.restype = wintypes.LPARAM
+_user32.IsZoomed.argtypes = [wintypes.HWND]
+_user32.IsZoomed.restype = wintypes.BOOL
 _user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                  ctypes.c_int, ctypes.c_int, wintypes.UINT]
 # 64 位用 *Ptr 变体避免 WS_POPUP(0x80000000) 的有符号溢出；32 位回退到 W 变体
@@ -86,14 +97,37 @@ else:
     _SetStyle.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]; _SetStyle.restype = wintypes.LONG
 
 
-def _enable_native_chrome(hwnd):
-    """一次性给无边框窗口加 WS_THICKFRAME|WS_MAXIMIZEBOX：启用原生缩放与 Snap，无可见边框。"""
+def _apply_window_style(hwnd, style):
+    """写入完整窗口样式并让 Win32 立即重算非客户区。"""
     try:
-        style = _GetStyle(hwnd, _GWL_STYLE)
-        _SetStyle(hwnd, _GWL_STYLE, style | _WS_THICKFRAME | _WS_MAXIMIZEBOX)
+        if _GetStyle(hwnd, _GWL_STYLE) == style:
+            return
+        _SetStyle(hwnd, _GWL_STYLE, style)
         _user32.SetWindowPos(hwnd, None, 0, 0, 0, 0,
                              _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_FRAMECHANGED)
     except Exception:
+        pass
+
+
+def _enable_native_chrome(hwnd):
+    """临时开启原生缩放样式，返回必须在循环结束后原样恢复的旧 style。"""
+    style = _GetStyle(hwnd, _GWL_STYLE)
+    _apply_window_style(hwnd, style | _WS_THICKFRAME | _WS_MAXIMIZEBOX)
+    return style
+
+
+def _set_native_frame_visual(hwnd, maximized):
+    """最大化时关闭 DWM 圆角和描边，还原时交回系统默认策略。"""
+    try:
+        dwm = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        dwm.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwm.restype = ctypes.c_long
+        corner = ctypes.c_int(_DWMWCP_DONOTROUND if maximized else _DWMWCP_DEFAULT)
+        border = ctypes.c_uint32(_DWMWA_COLOR_NONE if maximized else _DWMWA_COLOR_DEFAULT)
+        dwm(hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(corner), ctypes.sizeof(corner))
+        dwm(hwnd, _DWMWA_BORDER_COLOR, ctypes.byref(border), ctypes.sizeof(border))
+    except Exception:
+        # Windows 10 等旧系统不支持这些 Windows 11 DWM 属性，保持原行为即可。
         pass
 
 
@@ -120,19 +154,60 @@ $$\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}$$
 """
 
 
+def _document_path(path) -> Path:
+    if not path:
+        raise ValueError("文件路径为空")
+    p = Path(path).resolve(strict=True)
+    if not p.is_file():
+        raise ValueError("文件不存在")
+    if p.suffix.lower() not in _READABLE_EXTS:
+        raise ValueError("仅支持 Markdown 或纯文本文件")
+    if p.stat().st_size > _MAX_DOCUMENT_BYTES:
+        raise ValueError("文件过大（上限 16 MB）")
+    return p
+
+
 def _read_text(path: str) -> str:
-    p = Path(path)
+    p = _document_path(path)
+    data = p.read_bytes()
     for enc in ("utf-8-sig", "utf-8", "gbk", "latin-1"):
         try:
-            return p.read_text(encoding=enc)
+            return data.decode(enc)
         except (UnicodeDecodeError, UnicodeError):
             continue
-        except Exception:
-            break
+    raise UnicodeError("无法识别文件编码")
+
+
+def _settings_path() -> Path:
+    root = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Inkwell"
+    return root / "settings.json"
+
+
+def _load_preferences():
     try:
-        return p.read_bytes().decode("utf-8", errors="replace")
+        data = json.loads(_settings_path().read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {}
+        prefs = {}
+        if data.get("theme") in ("light", "dark"):
+            prefs["theme"] = data["theme"]
+        try:
+            font = float(data.get("font"))
+            if 10 <= font <= 26:
+                prefs["font"] = font
+        except (TypeError, ValueError):
+            pass
+        return prefs
     except Exception:
-        return ""
+        return {}
+
+
+def _save_preferences(preferences):
+    path = _settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(preferences, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 class Api:
@@ -141,41 +216,71 @@ class Api:
     def __init__(self):
         self._window = None
         self.current_file = None
-        self._maximized = False
+        self._maximized = None
+        self._native_state_handler = None
+        self._native_loop_active = False
+        self._normal_size = None
         self._mtime = None
+        self._state_lock = threading.RLock()
+        self.preferences = _load_preferences()
 
     # ---- 渲染 ----
     def _render_payload(self, path):
         try:
-            md_text = _read_text(path)
-            base_dir = str(Path(path).resolve().parent)
+            resolved = _document_path(path)
+            md_text = _read_text(resolved)
+            base_dir = str(resolved.parent)
             content, toc = _render.render_markdown(md_text, base_dir=base_dir)
-            title = Path(path).name
-            self.current_file = os.path.abspath(path)
-            try:
-                self._mtime = os.path.getmtime(path)
-            except OSError:
-                self._mtime = None
+            title = resolved.name
             return {"ok": True, "title": title, "content": content,
-                    "toc": toc, "path": self.current_file}
+                    "toc": toc, "path": str(resolved)}
         except Exception as e:
-            traceback.print_exc()
+            if os.environ.get("INKWELL_DEBUG") == "1":
+                traceback.print_exc()
+            error = html_module.escape(str(e))
             return {"ok": False, "error": str(e), "title": "错误",
-                    "content": f"<h1>无法打开文件</h1><pre>{e}</pre>", "toc": ""}
+                    "content": f"<h1>无法打开文件</h1><pre>{error}</pre>", "toc": ""}
 
     def render_path(self, path):
         """前端请求渲染某个文件，返回 payload。"""
-        if not path or not os.path.isfile(path):
-            return {"ok": False, "error": "文件不存在", "title": "错误",
-                    "content": "<h1>文件不存在</h1>", "toc": ""}
         return self._render_payload(path)
+
+    def activate_path(self, path):
+        """前端确认 payload 已显示后，再切换 watcher 与相对链接的活动文档。"""
+        try:
+            resolved = _document_path(path)
+            with self._state_lock:
+                self.current_file = str(resolved)
+                self._mtime = resolved.stat().st_mtime_ns
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def set_preference(self, key, value):
+        """把主题/字号写入宿主配置，避免随机 HTTP 端口导致 localStorage 失忆。"""
+        try:
+            if key not in _PREFERENCE_KEYS:
+                return {"ok": False, "error": "不支持的设置项"}
+            if key == "theme":
+                if value not in ("light", "dark"):
+                    raise ValueError("无效主题")
+            else:
+                value = float(value)
+                if not 10 <= value <= 26:
+                    raise ValueError("无效字号")
+            with self._state_lock:
+                self.preferences[key] = value
+                _save_preferences(self.preferences)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     def open_dialog(self):
         """弹系统文件选择框，选中后渲染并返回 payload。"""
         try:
             result = self._window.create_file_dialog(
                 webview.OPEN_DIALOG, allow_multiple=False,
-                file_types=("Markdown (*.md;*.markdown;*.mdown;*.mkd)", "所有文件 (*.*)"),
+                file_types=("Markdown / 文本 (*.md;*.markdown;*.mdown;*.mkd;*.txt)",),
             )
         except Exception:
             result = None
@@ -185,7 +290,7 @@ class Api:
         return self._render_payload(path)
 
     # ---- 文档间跳转（点击正文里的 .md 链接）----
-    def _resolve_local(self, href):
+    def _resolve_local(self, href, base_path=None):
         """把 href（相对/绝对/file://，可带 #anchor）解析为 (abs_path|None, anchor)。"""
         anchor = ""
         if "#" in href:
@@ -201,27 +306,26 @@ class Api:
             else:
                 p = Path(href)
                 if not p.is_absolute():
-                    base = (Path(self.current_file).resolve().parent
-                            if self.current_file else Path.cwd())
+                    source = base_path or self.current_file
+                    base = Path(source).resolve().parent if source else Path.cwd()
                     p = base / href
             return str(p.resolve()), anchor
         except Exception:
             return None, anchor
 
-    def open_md_link(self, href):
+    def open_md_link(self, href, base_path=None):
         """点击正文里指向本地 .md 的链接：解析并渲染目标文档，返回 payload（含 anchor）。"""
         try:
             if not href:
                 return {"ok": False, "error": "空链接"}
-            abspath, anchor = self._resolve_local(href)
+            abspath, anchor = self._resolve_local(href, base_path)
             if abspath is None:                       # 纯锚点（#section）
                 return {"ok": False, "samedoc": True, "anchor": anchor}
             # 同一文档内的锚点跳转，不重复渲染
-            if self.current_file and os.path.normcase(os.path.normpath(abspath)) == \
-               os.path.normcase(os.path.normpath(self.current_file)):
+            source_path = base_path or self.current_file
+            if source_path and os.path.normcase(os.path.normpath(abspath)) == \
+               os.path.normcase(os.path.normpath(source_path)):
                 return {"ok": False, "samedoc": True, "anchor": anchor}
-            if not os.path.isfile(abspath):
-                return {"ok": False, "error": "文件不存在：%s" % abspath, "anchor": anchor}
             payload = self._render_payload(abspath)
             payload["anchor"] = anchor
             return payload
@@ -248,7 +352,8 @@ class Api:
     def get_boot(self):
         return {"name": APP_NAME, "version": __version__,
                 "path": self.current_file,
-                "title": Path(self.current_file).name if self.current_file else APP_NAME}
+                "title": Path(self.current_file).name if self.current_file else APP_NAME,
+                "preferences": dict(self.preferences)}
 
     # ---- 窗口控制 ----
     def win_minimize(self):
@@ -278,15 +383,26 @@ class Api:
         def fn():
             try:
                 from System.Windows.Forms import FormWindowState
+                from System.Drawing import Size
                 form = self._window.native
                 if form.WindowState == FormWindowState.Maximized:
                     form.WindowState = FormWindowState.Normal
+                    if self._normal_size:
+                        form.Size = Size(*self._normal_size)
                 else:
+                    self._normal_size = (form.Width, form.Height)
                     self._apply_maximized_bounds()
                     form.WindowState = FormWindowState.Maximized
             except Exception:
                 pass
         self._ui_invoke(fn)
+
+    def win_is_maximized(self):
+        """供前端同步最大化状态；使用 Win32 查询，避免跨线程读取 WinForms 属性。"""
+        try:
+            return bool(_user32.IsZoomed(self._hwnd()))
+        except Exception:
+            return False
 
     def win_close(self):
         try:
@@ -310,19 +426,56 @@ class Api:
                 pass
 
     def init_native_chrome(self):
-        """窗口显示后调用一次：开启原生缩放 + Snap 资格，并校正最大化边界（含拖到屏幕
-        顶部的 Aero Snap 最大化）。MaximizedBounds 是 WinForms 属性，须在 UI 线程设定。"""
-        try:
-            _enable_native_chrome(self._hwnd())
-        except Exception:
-            pass
-        self._ui_invoke(self._apply_maximized_bounds)
+        """窗口显示后安装状态同步并校正最大化边界。"""
+
+        def init_state_sync():
+            self._apply_maximized_bounds()
+            form = self._window.native
+
+            def sync_frame(*_):
+                maximized = self.win_is_maximized()
+                if not maximized:
+                    # 窗口移到另一块显示器后，下一次按钮或 Aero 最大化应使用新工作区。
+                    self._apply_maximized_bounds()
+                    if not self._native_loop_active:
+                        self._normal_size = (form.Width, form.Height)
+                if maximized == self._maximized:
+                    return
+                self._maximized = maximized
+                _set_native_frame_visual(self._hwnd(), maximized)
+
+            if self._native_state_handler is None:
+                self._native_state_handler = sync_frame
+                form.SizeChanged += self._native_state_handler
+                form.LocationChanged += self._native_state_handler
+            sync_frame()
+
+        self._ui_invoke(init_state_sync)
 
     def win_native_drag(self):
         """从自绘标题栏发起原生窗口移动 → 支持拖到屏幕边缘 Snap 并列 / 拖回还原。"""
         hwnd = self._hwnd()
-        self._ui_invoke(lambda: (_user32.ReleaseCapture(),
-                                 _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)))
+
+        def fn():
+            from System.Drawing import Size
+            started_maximized = self.win_is_maximized()
+            if not started_maximized:
+                self._normal_size = (self._window.native.Width, self._window.native.Height)
+            self._native_loop_active = True
+            original_style = _enable_native_chrome(hwnd)
+            try:
+                _user32.ReleaseCapture()
+                _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)
+            finally:
+                _apply_window_style(hwnd, original_style)
+                self._native_loop_active = False
+                if started_maximized and not self.win_is_maximized() and self._normal_size:
+                    self._window.native.Size = Size(*self._normal_size)
+                elif not self.win_is_maximized():
+                    self._normal_size = (self._window.native.Width, self._window.native.Height)
+                self._apply_maximized_bounds()
+
+        self._ui_invoke(fn)
 
     def win_native_resize(self, edge):
         """从边/角发起原生缩放（8 向，原生光标 + Snap 预览）。"""
@@ -330,24 +483,42 @@ class Api:
         if code is None:
             return
         hwnd = self._hwnd()
-        self._ui_invoke(lambda: (_user32.ReleaseCapture(),
-                                 _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, code, 0)))
+
+        def fn():
+            self._native_loop_active = True
+            original_style = _enable_native_chrome(hwnd)
+            try:
+                _user32.ReleaseCapture()
+                _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, code, 0)
+            finally:
+                _apply_window_style(hwnd, original_style)
+                self._native_loop_active = False
+                if not self.win_is_maximized():
+                    self._normal_size = (self._window.native.Width, self._window.native.Height)
+
+        self._ui_invoke(fn)
 
 
 def _watch_file(api: Api):
     """后台轮询当前文件 mtime，变化时推送新内容到前端。"""
     while True:
         time.sleep(1.0)
-        path = api.current_file
+        with api._state_lock:
+            path = api.current_file
+            previous_mtime = api._mtime
         if not path:
             continue
         try:
-            mt = os.path.getmtime(path)
+            mt = os.stat(path).st_mtime_ns
         except OSError:
             continue
-        if api._mtime is not None and mt != api._mtime:
-            api._mtime = mt
+        if previous_mtime is not None and mt != previous_mtime:
             payload = api._render_payload(path)
+            with api._state_lock:
+                # 渲染期间用户可能已经切换文档；旧结果不得覆盖新页面或活动路径。
+                if api.current_file != path:
+                    continue
+                api._mtime = mt
             try:
                 js = "window.__applyPayload(%s)" % json.dumps(payload, ensure_ascii=False)
                 api._window.evaluate_js(js)
@@ -357,10 +528,11 @@ def _watch_file(api: Api):
 
 def _initial_file(argv):
     for a in argv[1:]:
-        if a and not a.startswith("-") and os.path.isfile(a):
-            low = a.lower()
-            if low.endswith((".md", ".markdown", ".mdown", ".mkd", ".txt")) or True:
-                return os.path.abspath(a)
+        if a and not a.startswith("-"):
+            try:
+                return str(_document_path(a))
+            except (OSError, ValueError):
+                continue
     return None
 
 
@@ -370,13 +542,19 @@ def main():
     init_path = _initial_file(sys.argv)
     if init_path:
         payload = api._render_payload(init_path)
-        title = payload.get("title", APP_NAME)
-        content, toc = payload.get("content", ""), payload.get("toc", "")
+        if payload.get("ok"):
+            api.activate_path(payload["path"])
+            title = payload.get("title", APP_NAME)
+            content, toc = payload.get("content", ""), payload.get("toc", "")
+        else:
+            title = payload.get("title", APP_NAME)
+            content, toc = payload.get("content", ""), ""
     else:
         content, toc = _render.render_markdown(WELCOME_MD, base_dir=str(Path.cwd()))
         title = APP_NAME
 
-    _server.set_page(build_page(content, toc, title, api.current_file))
+    _server.set_page(build_page(content, toc, title, api.current_file,
+                                preferences=api.preferences))
     httpd, url = _server.start_server()
 
     # WebView2 数据目录（cookies/localStorage 主题持久化）需可写

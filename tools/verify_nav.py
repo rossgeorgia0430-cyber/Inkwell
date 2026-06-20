@@ -16,13 +16,26 @@ open(os.path.join(D, "b.md"), "w", encoding="utf-8").write("# Doc B\n\n[到 C](c
 open(os.path.join(D, "c.md"), "w", encoding="utf-8").write("# Doc C\n\n[到 B](b.md)\n")
 A = os.path.join(D, "a.md")
 
-api = Api()
+class DelayedApi(Api):
+    """故意让 a.md 的异步响应慢于 c.md，用于验证旧响应不会覆盖新导航。"""
+
+    def open_md_link(self, href, base_path=None):
+        if (href or "").split("#", 1)[0].lower().endswith("a.md"):
+            time.sleep(0.35)
+        elif (href or "").split("#", 1)[0].lower().endswith("c.md"):
+            time.sleep(0.03)
+        return super().open_md_link(href, base_path)
+
+
+api = DelayedApi()
 res = {"steps": []}
 
 
 def setup():
-    payload = api._render_payload(A)            # 设置 current_file=a.md
-    S.set_page(build_page(payload["content"], payload["toc"], payload["title"], api.current_file))
+    payload = api._render_payload(A)
+    api.activate_path(A)
+    S.set_page(build_page(payload["content"], payload["toc"], payload["title"], A,
+                          preferences=api.preferences))
 
 
 def job(win):
@@ -60,6 +73,27 @@ def job(win):
         step("back->a", "window.__ink.nav.back()", "a.md", 0)
         step("fwd->b", "window.__ink.nav.forward()", "b.md", 1)
         step("b->c(truncate)", "window.__ink.nav.to('c.md')", "c.md", 2)
+
+        # watcher 中途送达旧文档 payload 时，必须完全忽略。
+        stale = json.dumps({"ok": True, "path": A, "title": "STALE",
+                            "content": "<h1>STALE</h1>", "toc": ""})
+        win.evaluate_js(f"window.__applyPayload({stale})")
+        st = state()
+        stale_ok = ((st.get("path") or "").lower().replace("\\", "/").endswith("c.md")
+                    and win.evaluate_js("!document.querySelector('#content h1').textContent.includes('STALE')"))
+        res["steps"].append({"name": "ignore-stale-watcher", "ok": stale_ok,
+                             "path_end": "c.md", "got_index": st.get("index"), "len": st.get("len")})
+
+        # 从 b 同时发起慢 a / 快 c，最后发起的 c 必须胜出。
+        step("race-setup->b", "window.__ink.nav.back()", "b.md", 1)
+        win.evaluate_js("window.__ink.nav.to('a.md'); window.__ink.nav.to('c.md')")
+        time.sleep(0.8)
+        st = state()
+        race_ok = ((st.get("path") or "").lower().replace("\\", "/").endswith("c.md")
+                   and st.get("index") == 2 and st.get("len") == 3
+                   and win.evaluate_js("document.querySelector('#content h1').textContent.includes('Doc C')"))
+        res["steps"].append({"name": "latest-navigation-wins", "ok": race_ok,
+                             "path_end": "c.md", "got_index": st.get("index"), "len": st.get("len")})
 
         res["all_pass"] = all(s["ok"] for s in res["steps"])
         res["final_len"] = state().get("len")

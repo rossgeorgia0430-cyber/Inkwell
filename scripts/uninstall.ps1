@@ -5,7 +5,8 @@
 #   - ProgId  Inkwell.Markdown（整键）
 #   - Applications\Inkwell.exe（整键，含 SupportedTypes/FriendlyAppName）
 #   - Capabilities：HKCU\Software\Inkwell（整键）+ RegisteredApplications\Inkwell
-#   - 各扩展名 OpenWithProgids 中的 Inkwell.Markdown；默认值若指向本程序则清空
+#   - 各扩展名 OpenWithProgids 中的 Inkwell.Markdown
+#   - 仅当扩展名默认值仍指向 Inkwell 时，恢复首次安装前保存的值
 #   - 开始菜单 + 桌面快捷方式
 #   - 安装目录 %LOCALAPPDATA%\Programs\Inkwell
 #   - 通知 Shell 刷新（SHChangeNotify）
@@ -24,6 +25,7 @@ $Friendly = 'Inkwell'
 $Target  = Join-Path $env:LOCALAPPDATA 'Programs\Inkwell'
 $C       = 'HKCU:\Software\Classes'
 $Exts    = @('.md', '.markdown', '.mdown', '.mkd')
+$BackupRoot = 'HKCU:\Software\Inkwell\AssociationBackup'
 
 $removed = 0
 function Line($t, $c = 'Gray') { Write-Host $t -ForegroundColor $c }
@@ -46,8 +48,8 @@ Start-Sleep -Milliseconds 300
 Line ""; Line "--- [1/5] 删除注册表键 ---" 'White'
 KillKey "$C\$ProgId"
 KillKey "$C\Applications\$ExeName"
-KillKey 'HKCU:\Software\Inkwell'
-if (Get-ItemProperty -LiteralPath 'HKCU:\Software\RegisteredApplications' -Name $Friendly -ErrorAction SilentlyContinue) {
+$registered = (Get-ItemProperty -LiteralPath 'HKCU:\Software\RegisteredApplications' -Name $Friendly -ErrorAction SilentlyContinue).$Friendly
+if ($registered -eq 'Software\Inkwell\Capabilities') {
     Remove-ItemProperty -LiteralPath 'HKCU:\Software\RegisteredApplications' -Name $Friendly -Force
     Line "[删] RegisteredApplications\$Friendly" 'Green'; $removed++
 }
@@ -61,10 +63,19 @@ foreach ($e in $Exts) {
     }
     $def = (Get-ItemProperty -LiteralPath "$C\$e" -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
     if ($def -eq $ProgId) {
-        Set-ItemProperty -LiteralPath "$C\$e" -Name '(default)' -Value '' -Force
-        Line "[删] $e 默认值（原 $ProgId，已清空）" 'Green'; $removed++
+        $backup = "$BackupRoot\$($e.TrimStart('.'))"
+        $saved = Get-ItemProperty -LiteralPath $backup -ErrorAction SilentlyContinue
+        if ($saved -and $saved.HadDefault -eq 1 -and $saved.Value -ne $ProgId) {
+            Set-ItemProperty -LiteralPath "$C\$e" -Name '(default)' -Value ([string]$saved.Value) -Force
+            Line "[恢复] $e 默认值 -> $($saved.Value)" 'Green'; $removed++
+        } else {
+            # 没有旧默认值，或旧安装未留下可用备份：只移除明确属于 Inkwell 的值。
+            Remove-ItemProperty -LiteralPath "$C\$e" -Name '(default)' -Force
+            Line "[删] $e 的 Inkwell 默认值" 'Green'; $removed++
+        }
     }
 }
+KillKey 'HKCU:\Software\Inkwell'
 
 Line ""; Line "--- [3/5] 删除快捷方式 ---" 'White'
 $lnks = @(
@@ -85,9 +96,10 @@ if (Test-Path -LiteralPath $Target) {
 if ($RemovePolicy) {
     $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
     $cur = (Get-ItemProperty -LiteralPath $pol -Name 'DefaultAssociationsConfiguration' -ErrorAction SilentlyContinue).DefaultAssociationsConfiguration
-    if ($cur -and $cur -like '*Inkwell*') {
+    $ownedPolicy = Join-Path $env:ProgramData 'Inkwell\DefaultAssoc.xml'
+    if ($cur -and $cur -eq $ownedPolicy) {
         Remove-ItemProperty -LiteralPath $pol -Name 'DefaultAssociationsConfiguration' -Force
-        Remove-Item -LiteralPath (Join-Path $env:ProgramData 'Inkwell') -Recurse -Force
+        Remove-Item -LiteralPath (Split-Path $ownedPolicy -Parent) -Recurse -Force
         Line "[删] HKLM 组策略 DefaultAssociationsConfiguration" 'Green'; $removed++
     }
 }

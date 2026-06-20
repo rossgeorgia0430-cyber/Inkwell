@@ -9,6 +9,7 @@
 #   - 完整注册：ProgId + Applications\Inkwell.exe(FriendlyAppName+SupportedTypes)
 #     + Capabilities + RegisteredApplications + OpenWithProgids
 #     —— 这套“完整应用注册”正是让双击 .md 时出现“始终使用此应用打开”的关键
+#   - 不直接改写扩展名默认值 / UserChoice，避免覆盖用户已有默认应用
 #   - 通知 Shell 刷新、创建开始菜单/桌面快捷方式
 #   - 收尾引导用户一键确认默认程序（Windows 安全机制要求的最后一步）
 #
@@ -34,6 +35,7 @@ $Friendly = 'Inkwell'
 $AppDesc  = 'Inkwell - 本地 Markdown 阅读器'
 $Target   = Join-Path $env:LOCALAPPDATA 'Programs\Inkwell'
 $Exts     = @('.md', '.markdown', '.mdown', '.mkd')
+$BackupRoot = 'HKCU:\Software\Inkwell\AssociationBackup'
 
 function Line($t, $c = 'Gray') { Write-Host $t -ForegroundColor $c }
 function Head($t) { Write-Host ""; Line "--- $t ---" 'White' }
@@ -155,6 +157,25 @@ Head '[4/8] 注册文件关联（完整应用注册）'
 
 function Ensure-Key($p) { if (-not (Test-Path -LiteralPath $p)) { New-Item -Path $p -Force | Out-Null } }
 function Set-Default($p, $v) { Ensure-Key $p; Set-ItemProperty -LiteralPath $p -Name '(default)' -Value $v -Force }
+function Save-ExtensionDefault($ext) {
+    # 只在首次安装时记录；升级不能覆盖最初的安装前状态。
+    $name = $ext.TrimStart('.')
+    $backup = "$BackupRoot\$name"
+    if (Test-Path -LiteralPath $backup) { return }
+    Ensure-Key $backup
+    $extPath = "$C\$ext"
+    $hadDefault = $false
+    $oldDefault = $null
+    if (Test-Path -LiteralPath $extPath) {
+        $item = Get-Item -LiteralPath $extPath
+        $hadDefault = $item.GetValueNames() -contains ''
+        if ($hadDefault) { $oldDefault = $item.GetValue('') }
+    }
+    Set-ItemProperty -LiteralPath $backup -Name 'HadDefault' -Value ([int]$hadDefault) -Type DWord -Force
+    if ($hadDefault) {
+        Set-ItemProperty -LiteralPath $backup -Name 'Value' -Value ([string]$oldDefault) -Type String -Force
+    }
+}
 
 $C   = 'HKCU:\Software\Classes'
 $cmd = ('"{0}" "%1"' -f $exe)
@@ -177,13 +198,14 @@ try {
     Ensure-Key "$app\SupportedTypes"
     foreach ($e in $Exts) { Set-ItemProperty -LiteralPath "$app\SupportedTypes" -Name $e -Value '' -Type String -Force }
 
-    # C) 扩展名 -> ProgId（默认值兜底 + OpenWithProgids 列入候选）
+    # C) 只把 Inkwell 列入候选，不覆盖扩展名默认值或受保护的 UserChoice。
+    #    同时保存安装前状态，供卸载旧版本遗留的 Inkwell 默认值时安全恢复。
     foreach ($e in $Exts) {
-        Set-Default "$C\$e" $ProgId
+        Save-ExtensionDefault $e
+        Ensure-Key "$C\$e"
         Ensure-Key "$C\$e\OpenWithProgids"
         New-ItemProperty -LiteralPath "$C\$e\OpenWithProgids" -Name $ProgId -PropertyType None -Value ([byte[]]@()) -Force | Out-Null
     }
-    Set-ItemProperty -LiteralPath "$C\.md" -Name 'Content Type' -Value 'text/markdown' -Force
 
     # D) App Capabilities + RegisteredApplications（进入“设置 > 默认应用”候选）
     $cap = 'HKCU:\Software\Inkwell\Capabilities'
@@ -194,7 +216,7 @@ try {
     Ensure-Key 'HKCU:\Software\RegisteredApplications'
     Set-ItemProperty -LiteralPath 'HKCU:\Software\RegisteredApplications' -Name $Friendly -Value 'Software\Inkwell\Capabilities' -Force
 
-    Line "[OK]     已完成完整注册（ProgId / Application / SupportedTypes / Capabilities）。" 'Green'
+    Line "[OK]     已注册为 Markdown 候选应用；未改写用户现有默认应用。" 'Green'
 } catch {
     Line "[错误]   注册失败：$($_.Exception.Message)" 'Red'
 } finally {
@@ -258,11 +280,15 @@ if ($SetDefaultViaPolicy) {
         try {
             $ErrorActionPreference = 'Stop'
             $xmlPath = Join-Path $env:ProgramData 'Inkwell\DefaultAssoc.xml'
+            $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
+            $existingPolicy = (Get-ItemProperty -LiteralPath $pol -Name 'DefaultAssociationsConfiguration' -ErrorAction SilentlyContinue).DefaultAssociationsConfiguration
+            if ($existingPolicy -and $existingPolicy -ne $xmlPath) {
+                throw "系统已有默认关联策略 '$existingPolicy'，为避免覆盖已跳过。"
+            }
             Ensure-Key (Split-Path $xmlPath -Parent)
             $assoc = ($Exts | ForEach-Object { "  <Association Identifier=`"$_`" ProgId=`"$ProgId`" ApplicationName=`"$Friendly`" />" }) -join "`r`n"
             $xml = "<?xml version=`"1.0`" encoding=`"UTF-8`"?>`r`n<DefaultAssociations>`r`n$assoc`r`n</DefaultAssociations>`r`n"
             [System.IO.File]::WriteAllText($xmlPath, $xml, (New-Object System.Text.UTF8Encoding($true)))
-            $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
             Ensure-Key $pol
             Set-ItemProperty -LiteralPath $pol -Name 'DefaultAssociationsConfiguration' -Value $xmlPath -Type String -Force
             Line "[OK]     已写组策略 XML：$xmlPath（注销/重新登录后生效）。" 'Green'

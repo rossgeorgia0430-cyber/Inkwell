@@ -139,7 +139,9 @@ def _localize_image_url(src, base_dir):
         return src
 
     lower = src.lower()
-    if lower.startswith(("http://", "https://", "data:", "mailto:", "tel:", "javascript:")):
+    if lower.startswith(("javascript:", "vbscript:")):
+        return ""
+    if lower.startswith(("http://", "https://", "data:", "mailto:", "tel:")):
         return src
 
     local_path = None
@@ -239,6 +241,186 @@ def _preprocess_markdown_images(md_text, base_dir):
 from html.parser import HTMLParser
 
 
+# Markdown 允许混入原始 HTML。这里保留常用排版标签，但主动移除脚本、事件属性、
+# 内联样式和危险 URL；否则本地文档中的脚本可以直接接触 pywebview 的 JS bridge。
+_SAFE_HTML_TAGS = {
+    "a", "abbr", "b", "blockquote", "br", "caption", "cite", "code", "col",
+    "colgroup", "dd", "del", "details", "div", "dl", "dt", "em", "figcaption",
+    "figure", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "ins",
+    "kbd", "li", "mark", "ol", "p", "picture", "pre", "q", "s", "samp",
+    "small", "source", "span", "strong", "sub", "summary", "sup", "table",
+    "tbody", "td", "tfoot", "th", "thead", "tr", "ul", "var",
+}
+_DROP_WITH_CONTENT_TAGS = {
+    "applet", "audio", "canvas", "form", "frameset", "iframe", "math", "object",
+    "plaintext", "script", "select", "style", "svg", "template", "textarea", "video",
+    "xmp",
+}
+_STRIP_ONLY_TAGS = {"base", "embed", "frame", "input", "link", "meta"}
+_VOID_HTML_TAGS = {"br", "col", "hr", "img", "source"}
+_GLOBAL_SAFE_ATTRS = {"class", "dir", "id", "lang", "role", "title"}
+_TAG_SAFE_ATTRS = {
+    "a": {"href", "rel", "target"},
+    "blockquote": {"cite"}, "col": {"span"}, "colgroup": {"span"},
+    "del": {"cite", "datetime"}, "details": {"open"},
+    "div": {"data-codeblk"},
+    "img": {"alt", "height", "loading", "src", "srcset", "width"},
+    "ins": {"cite", "datetime"}, "li": {"value"},
+    "ol": {"reversed", "start", "type"}, "q": {"cite"},
+    "source": {"height", "media", "sizes", "src", "srcset", "type", "width"},
+    "td": {"align", "colspan", "headers", "rowspan"},
+    "th": {"align", "colspan", "headers", "rowspan", "scope"},
+}
+_SAFE_LINK_SCHEMES = {"http", "https", "mailto", "tel"}
+_SAFE_IMAGE_SCHEMES = {"http", "https", "blob"}
+_SAFE_DATA_IMAGE_RE = re.compile(
+    r"^data:image/(?:avif|bmp|gif|jpeg|jpg|png|webp);(?:base64,|charset=[^,]+,)",
+    re.IGNORECASE,
+)
+
+
+def _safe_url(value, *, image=False):
+    """返回可放入 href/src 的 URL；危险或混淆 scheme 返回 None。"""
+    value = str(value or "").strip()
+    if not value:
+        return value
+    compact = re.sub(r"[\x00-\x20\x7f]+", "", value)
+    if image and compact.lower().startswith("data:"):
+        return value if _SAFE_DATA_IMAGE_RE.match(compact) else None
+    try:
+        scheme = urlsplit(compact).scheme.lower()
+    except Exception:
+        return None
+    if not scheme:
+        return value
+    allowed = _SAFE_IMAGE_SCHEMES if image else _SAFE_LINK_SCHEMES
+    return value if scheme in allowed else None
+
+
+def _safe_srcset(value):
+    """校验 srcset 中的每个 URL；data URL 含逗号，保守地不接受。"""
+    value = str(value or "").strip()
+    if not value or "data:" in value.lower():
+        return None
+    for candidate in value.split(","):
+        url = candidate.strip().split(None, 1)[0] if candidate.strip() else ""
+        if not url or _safe_url(url, image=True) is None:
+            return None
+    return value
+
+
+class _HTMLSanitizer(HTMLParser):
+    """面向 Markdown 输出的轻量 allowlist sanitizer。"""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.out = []
+        self._drop_depth = 0
+
+    def _attrs(self, tag, attrs):
+        allowed = _GLOBAL_SAFE_ATTRS | _TAG_SAFE_ATTRS.get(tag, set())
+        rendered = []
+        for key, value in attrs:
+            key = key.lower()
+            if key.startswith("on") or key == "style":
+                continue
+            if key not in allowed and not key.startswith("aria-"):
+                continue
+            if key == "data-codeblk" and not re.fullmatch(r"[0-9a-f]{32}", value or ""):
+                continue
+            if value is not None and key in {"href", "cite"}:
+                value = _safe_url(value)
+                if value is None:
+                    continue
+            elif value is not None and key == "src":
+                value = _safe_url(value, image=True)
+                if value is None:
+                    continue
+            elif value is not None and key == "srcset":
+                value = _safe_srcset(value)
+                if value is None:
+                    continue
+            elif key == "target" and value not in {"_blank", "_self"}:
+                continue
+            elif key == "rel" and value:
+                tokens = {v.lower() for v in value.split()}
+                value = " ".join(sorted(tokens & {"noopener", "noreferrer", "nofollow"}))
+                if not value:
+                    continue
+            rendered.append((key, value))
+        if tag == "a" and any(k == "target" and v == "_blank" for k, v in rendered):
+            rel_index = next((i for i, item in enumerate(rendered) if item[0] == "rel"), None)
+            if rel_index is None:
+                rendered.append(("rel", "noopener noreferrer"))
+            else:
+                rel = set(rendered[rel_index][1].split()) | {"noopener", "noreferrer"}
+                rendered[rel_index] = ("rel", " ".join(sorted(rel)))
+        return rendered
+
+    def _start(self, tag, attrs, self_closing=False):
+        tag = tag.lower()
+        if self._drop_depth:
+            if tag in _DROP_WITH_CONTENT_TAGS and not self_closing:
+                self._drop_depth += 1
+            return
+        if tag in _DROP_WITH_CONTENT_TAGS:
+            if not self_closing:
+                self._drop_depth = 1
+            return
+        if tag in _STRIP_ONLY_TAGS:
+            return
+        if tag not in _SAFE_HTML_TAGS:
+            return
+        buf = [f"<{tag}"]
+        for key, value in self._attrs(tag, attrs):
+            if value is None:
+                buf.append(f" {key}")
+            else:
+                buf.append(f' {key}="{html_module.escape(str(value), quote=True)}"')
+        buf.append(" />" if self_closing else ">")
+        self.out.append("".join(buf))
+
+    def handle_starttag(self, tag, attrs):
+        self._start(tag, attrs)
+
+    def handle_startendtag(self, tag, attrs):
+        self._start(tag, attrs, True)
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if self._drop_depth:
+            if tag in _DROP_WITH_CONTENT_TAGS:
+                self._drop_depth -= 1
+            return
+        if tag in _SAFE_HTML_TAGS and tag not in _VOID_HTML_TAGS:
+            self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if not self._drop_depth:
+            # HTMLParser 对 plaintext/xmp 及畸形 HTML 可能把形似标签的内容作为
+            # data 交回；始终转义，避免清理后重新组成可执行标签。
+            self.out.append(html_module.escape(data, quote=False))
+
+    def handle_entityref(self, name):
+        if not self._drop_depth:
+            self.out.append(f"&{name};")
+
+    def handle_charref(self, name):
+        if not self._drop_depth:
+            self.out.append(f"&#{name};")
+
+
+def sanitize_html(html_text):
+    """清理 Markdown 产生或携带的 HTML。解析失败时安全降级为纯文本。"""
+    try:
+        parser = _HTMLSanitizer()
+        parser.feed(html_text or "")
+        parser.close()
+        return "".join(parser.out)
+    except Exception:
+        return html_module.escape(html_text or "")
+
+
 class _ImgSrcHTMLRewriter(HTMLParser):
     """重写已渲染 HTML 里 <img>/<source> 的 src/srcset 为本地化 URL。"""
 
@@ -317,8 +499,8 @@ def protect_latex(md_text):
         escaped = html_module.escape(latex_code, quote=True)
         placeholders[key] = (
             f'<div class="math-block" data-latex="{escaped}">'
-            f'<button class="math-copy-btn" onclick="copyLatex(this)" title="复制 LaTeX">复制公式</button>'
-            f'$${latex_code}$$</div>'
+            f'<button class="math-copy-btn" data-copy-action="latex" title="复制 LaTeX">复制公式</button>'
+            f'$${escaped}$$</div>'
         )
         return key
 
@@ -329,7 +511,7 @@ def protect_latex(md_text):
         latex_code = match.group(1).strip()
         escaped = html_module.escape(latex_code, quote=True)
         placeholders[key] = (
-            f'<span class="math-inline" data-latex="{escaped}">${latex_code}$</span>'
+            f'<span class="math-inline" data-latex="{escaped}">${escaped}$</span>'
         )
         return key
 
@@ -344,8 +526,8 @@ def protect_latex(md_text):
         escaped = html_module.escape(latex_code, quote=True)
         placeholders[key] = (
             f'<div class="math-block" data-latex="{escaped}">'
-            f'<button class="math-copy-btn" onclick="copyLatex(this)" title="复制 LaTeX">复制公式</button>'
-            f'\\[{latex_code}\\]</div>'
+            f'<button class="math-copy-btn" data-copy-action="latex" title="复制 LaTeX">复制公式</button>'
+            f'\\[{escaped}\\]</div>'
         )
         return key
 
@@ -354,7 +536,7 @@ def protect_latex(md_text):
         latex_code = match.group(1).strip()
         escaped = html_module.escape(latex_code, quote=True)
         placeholders[key] = (
-            f'<span class="math-inline" data-latex="{escaped}">\\({latex_code}\\)</span>'
+            f'<span class="math-inline" data-latex="{escaped}">\\({escaped}\\)</span>'
         )
         return key
 
@@ -428,7 +610,7 @@ def _build_code_html(lang, filepath, code):
         + (f' data-filepath="{esc_path}"' if esc_path else '') + '>'
         f'<div class="code-block-header">'
         f'{badge}{pathspan}'
-        f'<button class="code-copy-btn" onclick="copyCode(this)" title="复制代码">'
+        f'<button class="code-copy-btn" data-copy-action="code" title="复制代码">'
         f'<svg viewBox="0 0 24 24" class="copy-ico"><rect x="9" y="9" width="11" height="11" rx="2"/>'
         f'<path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><span class="copy-label">复制</span></button>'
         f'</div>'
@@ -443,19 +625,23 @@ def protect_code_blocks(md_text):
     i, n = 0, len(lines)
     while i < n:
         line = lines[i]
-        stripped = line.lstrip()
-        if stripped.startswith('```') or stripped.startswith('~~~'):
-            fence = stripped[:3]
-            info = stripped[3:]
+        opener = re.match(r'^( {0,3})(`{3,}|~{3,})([^\n]*)$', line)
+        if opener and not (opener.group(2)[0] == '`' and '`' in opener.group(3)):
+            indent, fence, info = opener.groups()
+            fence_char = fence[0]
+            fence_len = len(fence)
+            closer_re = re.compile(rf'^ {{0,3}}{re.escape(fence_char)}{{{fence_len},}}[ \t]*$')
             j, body = i + 1, []
-            while j < n and not lines[j].lstrip().startswith(fence):
-                body.append(lines[j])
+            while j < n and not closer_re.match(lines[j]):
+                body_line = lines[j]
+                # CommonMark：内容行最多移除 opening fence 的缩进量。
+                remove = min(len(indent), len(body_line) - len(body_line.lstrip(' ')))
+                body.append(body_line[remove:])
                 j += 1
             if j < n:  # 找到了闭合围栏
                 lang, filepath = _parse_info(info)
                 key = uuid.uuid4().hex
                 placeholders[key] = _build_code_html(lang, filepath, '\n'.join(body))
-                indent = line[:len(line) - len(stripped)]
                 out.append(f'{indent}<div data-codeblk="{key}"></div>')
                 i = j + 1
                 continue
@@ -473,8 +659,8 @@ def restore_code_blocks(html_text, placeholders):
 
 def render_markdown(md_text, base_dir=None):
     """Markdown -> (html, toc_html)。"""
-    md_text = _preprocess_markdown_images(md_text, base_dir)
     md_text, code_blocks = protect_code_blocks(md_text)
+    md_text = _preprocess_markdown_images(md_text, base_dir)
     protected_text, placeholders = protect_latex(md_text)
 
     md = markdown.Markdown(
@@ -485,8 +671,11 @@ def render_markdown(md_text, base_dir=None):
             'toc': {'permalink': False, 'toc_depth': 4},
         },
     )
-    html = md.convert(protected_text)
+    # 先本地化原始 HTML 中的 img/source，再做安全清理；这样 file:/Windows 路径
+    # 不需要作为可执行 URL scheme 放进 sanitizer 的 allowlist。
+    html = rewrite_images_in_html(md.convert(protected_text), base_dir)
+    html = sanitize_html(html)
+    toc_html = sanitize_html(md.toc)
     html = restore_latex(html, placeholders)
     html = restore_code_blocks(html, code_blocks)
-    html = rewrite_images_in_html(html, base_dir)
-    return html, md.toc
+    return html, toc_html
