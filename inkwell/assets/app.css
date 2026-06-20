@@ -32,8 +32,10 @@
   --accent-soft: rgba(217,119,87,.15);
   --code-bg: #f7f6f1;
   --code-border: #eceae1;
-  --inline-code-bg: #ebe9e4;
-  --inline-code-fg: #3a3a36;
+  /* 行内代码：Claude Desktop 风格——极轻的中性灰，仅比正文底略重一点点。
+     旧值 #ebe9e4 比代码块底(#f7f6f1)还深，整块显得很重/粗糙。 */
+  --inline-code-bg: #f3f1ea;
+  --inline-code-fg: #37332d;
   --mark: #ffe3a3;
   --mark-current: #f5b54a;
   --var-hl: rgba(217,119,87,.18);
