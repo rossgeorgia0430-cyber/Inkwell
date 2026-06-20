@@ -517,7 +517,10 @@
   function onResize() {
     var drawer = window.innerWidth < 760;
     app.classList.toggle("drawer", drawer);
-    if (!drawer) app.classList.remove("sidebar-open");
+    // 抽屉态用 .sidebar-open 控制侧栏；.sidebar-hidden 只属于宽屏态，二者互斥，
+    // 否则 .sidebar-hidden 的 display:none 会让抽屉永远拉不出来。
+    if (drawer) app.classList.remove("sidebar-hidden");
+    else app.classList.remove("sidebar-open");
     var a = api();
     if (a && a.win_is_maximized) {
       a.win_is_maximized().then(function (maximized) {

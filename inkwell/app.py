@@ -314,7 +314,10 @@ class Api:
         try:
             result = self._window.create_file_dialog(
                 webview.OPEN_DIALOG, allow_multiple=False,
-                file_types=("Markdown / 文本 (*.md;*.markdown;*.mdown;*.mkd;*.txt)",),
+                # 描述只能含「单词字符+空格」：pywebview 6.1 的 parse_file_type 用
+                # ^([\w ]+)\( 校验，描述里出现 '/' 等标点会抛错被吞掉→对话框返回 None
+                # （表现为「打开文件」按钮点了没反应）。故用「与」连接，避免斜杠。
+                file_types=("Markdown 与文本 (*.md;*.markdown;*.mdown;*.mkd;*.txt)",),
             )
         except Exception:
             result = None

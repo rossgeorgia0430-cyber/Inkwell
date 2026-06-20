@@ -179,7 +179,9 @@ button { font-family: inherit; }
   overflow: hidden;
   position: relative;
 }
-.app.sidebar-hidden { grid-template-columns: 0 minmax(0, 1fr); }
+/* 收起目录：把侧栏移出网格、正文单列铺满。不能只把列宽设 0——border-box 下
+   width:0 仍压不掉侧栏左右各 10px 的 padding，会漏出约 20px 侧栏底色的发丝边。 */
+.app.sidebar-hidden { grid-template-columns: minmax(0, 1fr); }
 
 /* ============================================================
    侧栏 / 目录
@@ -199,8 +201,9 @@ button { font-family: inherit; }
   text-transform: uppercase; color: var(--faint);
   padding: 4px 10px 10px;
 }
-/* 收起目录：彻底隐藏，不留发丝缝/投影 */
-.app.sidebar-hidden .sidebar { pointer-events: none; box-shadow: none; }
+/* 收起目录：彻底移出渲染流，不留任何 padding 余宽/发丝缝/投影。
+   仅非抽屉态——抽屉态用 .sidebar-open 控制侧栏，二者由 onResize 保证互斥。 */
+.app.sidebar-hidden:not(.drawer) .sidebar { display: none; }
 
 /* TOC（markdown toc 扩展产出 .toc > ul > li > a） */
 .toc ul { list-style: none; margin: 0; padding: 0; }

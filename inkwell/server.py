@@ -68,7 +68,7 @@ def _safe_join(base: Path, rel: str):
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "Inkwell/1.1.1"
+    server_version = "Inkwell/1.1.2"
 
     def log_message(self, *args):
         pass  # 静默
