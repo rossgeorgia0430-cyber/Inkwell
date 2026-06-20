@@ -53,12 +53,17 @@ from . import APP_NAME, __version__
 
 
 # ---------------------------------------------------------------------------
-# 原生窗口行为（Win32）：在系统移动/缩放循环期间临时添加 WS_THICKFRAME，启用
-# 「原生 8 向缩放 + Aero Snap 并列 + 拖回还原」；循环退出后立即移除，避免无边框
-# WebView 被非客户区向内挤出一圈空隙。所有调用必须 marshal 到 WinForms UI 线程。
+# 原生窗口行为（Win32）：给无边框窗口「永久」加上 WS_THICKFRAME|WS_MAXIMIZEBOX，
+# 启用原生 8 向缩放 + Aero Snap 并列 + 拖回还原；同时用 ctypes 子类化窗口过程，在
+# WM_NCCALCSIZE 返回 0，让客户区铺满整个窗口矩形——这样无边框窗口在拖动/缩放时
+# 不会冒出系统画的非客户区缩放边框（之前临时加 WS_THICKFRAME 会闪一圈白边，且反复
+# 增删样式偶发丢边框）。pythonnet 覆写 Form.WndProc 不生效，但裸 Win32 子类化
+# （SetWindowLongPtr(GWLP_WNDPROC)）完全可用。所有安装/手势调用须在 UI 线程执行。
 # ---------------------------------------------------------------------------
 _user32 = ctypes.windll.user32
 _WM_NCLBUTTONDOWN = 0x00A1
+_WM_NCCALCSIZE = 0x0083
+_GWLP_WNDPROC = -4
 _HTCAPTION = 2
 _RESIZE_HT = {
     'left': 10, 'right': 11, 'top': 12, 'topleft': 13, 'topright': 14,
@@ -96,6 +101,22 @@ else:
     _GetStyle.argtypes = [wintypes.HWND, ctypes.c_int]; _GetStyle.restype = wintypes.LONG
     _SetStyle.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]; _SetStyle.restype = wintypes.LONG
 
+# 子类化窗口过程所需：WNDPROC 回调原型 + CallWindowProc + SetWindowLongPtr(GWLP_WNDPROC)
+_WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+                              ctypes.c_size_t, ctypes.c_ssize_t)
+_user32.CallWindowProcW.restype = ctypes.c_ssize_t
+_user32.CallWindowProcW.argtypes = [ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+                                    ctypes.c_size_t, ctypes.c_ssize_t]
+if ctypes.sizeof(ctypes.c_void_p) == 8 and hasattr(_user32, 'SetWindowLongPtrW'):
+    _SetWndProc = _user32.SetWindowLongPtrW
+else:
+    _SetWndProc = _user32.SetWindowLongW
+_SetWndProc.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+_SetWndProc.restype = ctypes.c_ssize_t
+
+# 子类化回调必须保活，否则 trampoline 被 GC 后窗口收到消息即崩溃。
+_WNDPROC_REFS = []
+
 
 def _apply_window_style(hwnd, style):
     """写入完整窗口样式并让 Win32 立即重算非客户区。"""
@@ -109,11 +130,24 @@ def _apply_window_style(hwnd, style):
         pass
 
 
-def _enable_native_chrome(hwnd):
-    """临时开启原生缩放样式，返回必须在循环结束后原样恢复的旧 style。"""
+def _install_native_chrome(hwnd):
+    """一次性：子类化窗口过程（WM_NCCALCSIZE→0，客户区铺满整窗、无可见缩放边框），
+    并永久加上 WS_THICKFRAME|WS_MAXIMIZEBOX（原生 8 向缩放 + Aero Snap）。
+    须在拥有该窗口的 UI 线程调用一次。"""
+    old_proc = [0]
+
+    @_WNDPROC
+    def _proc(h, msg, wparam, lparam):
+        # 移除全部非客户区：无边框窗口因此不会显示系统的缩放边框/内缩白边。
+        if msg == _WM_NCCALCSIZE and wparam:
+            return 0
+        return _user32.CallWindowProcW(old_proc[0], h, msg, wparam, lparam)
+
+    # 先登记旧过程，再切换——SetWindowPos(FRAMECHANGED) 会同步回调 _proc。
+    old_proc[0] = _SetWndProc(hwnd, _GWLP_WNDPROC, ctypes.cast(_proc, ctypes.c_void_p).value)
+    _WNDPROC_REFS.append(_proc)            # 保活
     style = _GetStyle(hwnd, _GWL_STYLE)
     _apply_window_style(hwnd, style | _WS_THICKFRAME | _WS_MAXIMIZEBOX)
-    return style
 
 
 def _set_native_frame_visual(hwnd, maximized):
@@ -218,7 +252,7 @@ class Api:
         self.current_file = None
         self._maximized = None
         self._native_state_handler = None
-        self._native_loop_active = False
+        self._chrome_installed = False
         self._normal_size = None
         self._mtime = None
         self._state_lock = threading.RLock()
@@ -426,9 +460,13 @@ class Api:
                 pass
 
     def init_native_chrome(self):
-        """窗口显示后安装状态同步并校正最大化边界。"""
+        """窗口显示后：永久安装原生缩放样式 + WM_NCCALCSIZE 子类化（一次），
+        并装好显示器/最大化状态同步。"""
 
         def init_state_sync():
+            if not self._chrome_installed:
+                _install_native_chrome(self._hwnd())
+                self._chrome_installed = True
             self._apply_maximized_bounds()
             form = self._window.native
 
@@ -437,8 +475,7 @@ class Api:
                 if not maximized:
                     # 窗口移到另一块显示器后，下一次按钮或 Aero 最大化应使用新工作区。
                     self._apply_maximized_bounds()
-                    if not self._native_loop_active:
-                        self._normal_size = (form.Width, form.Height)
+                    self._normal_size = (form.Width, form.Height)
                 if maximized == self._maximized:
                     return
                 self._maximized = maximized
@@ -453,7 +490,8 @@ class Api:
         self._ui_invoke(init_state_sync)
 
     def win_native_drag(self):
-        """从自绘标题栏发起原生窗口移动 → 支持拖到屏幕边缘 Snap 并列 / 拖回还原。"""
+        """从自绘标题栏发起原生窗口移动 → 支持拖到屏幕边缘 Snap 并列 / 拖回还原。
+        样式已永久具备 WS_THICKFRAME，手势期间不再增删样式（避免闪白边/丢边框）。"""
         hwnd = self._hwnd()
 
         def fn():
@@ -461,19 +499,13 @@ class Api:
             started_maximized = self.win_is_maximized()
             if not started_maximized:
                 self._normal_size = (self._window.native.Width, self._window.native.Height)
-            self._native_loop_active = True
-            original_style = _enable_native_chrome(hwnd)
-            try:
-                _user32.ReleaseCapture()
-                _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)
-            finally:
-                _apply_window_style(hwnd, original_style)
-                self._native_loop_active = False
-                if started_maximized and not self.win_is_maximized() and self._normal_size:
-                    self._window.native.Size = Size(*self._normal_size)
-                elif not self.win_is_maximized():
-                    self._normal_size = (self._window.native.Width, self._window.native.Height)
-                self._apply_maximized_bounds()
+            _user32.ReleaseCapture()
+            _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)
+            if started_maximized and not self.win_is_maximized() and self._normal_size:
+                self._window.native.Size = Size(*self._normal_size)
+            elif not self.win_is_maximized():
+                self._normal_size = (self._window.native.Width, self._window.native.Height)
+            self._apply_maximized_bounds()
 
         self._ui_invoke(fn)
 
@@ -485,16 +517,10 @@ class Api:
         hwnd = self._hwnd()
 
         def fn():
-            self._native_loop_active = True
-            original_style = _enable_native_chrome(hwnd)
-            try:
-                _user32.ReleaseCapture()
-                _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, code, 0)
-            finally:
-                _apply_window_style(hwnd, original_style)
-                self._native_loop_active = False
-                if not self.win_is_maximized():
-                    self._normal_size = (self._window.native.Width, self._window.native.Height)
+            _user32.ReleaseCapture()
+            _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, code, 0)
+            if not self.win_is_maximized():
+                self._normal_size = (self._window.native.Width, self._window.native.Height)
 
         self._ui_invoke(fn)
 
