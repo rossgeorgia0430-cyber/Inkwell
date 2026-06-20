@@ -19,3 +19,7 @@ tools/_*.png
 .idea/
 .DS_Store
 Thumbs.db
+
+# AI 助手本地指引文档（不入库）
+/CLAUDE.md
+/AGENTS.md
