@@ -43,6 +43,17 @@ def _rects(hwnd):
         "client": [origin.x, origin.y, origin.x + cr.right, origin.y + cr.bottom],
     }
 
+
+def _wait_js(win, expr, timeout=2.0):
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        last = bool(win.evaluate_js(expr))
+        if last:
+            return True
+        time.sleep(0.1)
+    return bool(last)
+
 api = Api()
 content, toc = R.render_markdown("# 原生窗口验证\n\n拖标题栏可 Snap；拖边/角可缩放。", base_dir=HERE)
 S.set_page(build_page(content, toc, "native-verify"))
@@ -70,11 +81,12 @@ def job(win):
         api.win_toggle_maximize(); time.sleep(0.5)
         res["maximized_state"] = int(win.native.WindowState)   # 期望 2
         res["maximized_api"] = api.win_is_maximized()
-        res["maximized_css"] = bool(win.evaluate_js(
-            "document.documentElement.classList.contains('window-maximized')"))
-        res["handles_hidden"] = bool(win.evaluate_js(
+        res["maximized_css"] = _wait_js(
+            win, "document.documentElement.classList.contains('window-maximized')")
+        res["handles_hidden"] = _wait_js(
+            win,
             "Array.from(document.querySelectorAll('.resize-handle')).every(function(e){"
-            "return getComputedStyle(e).display==='none';})"))
+            "return getComputedStyle(e).display==='none';})")
         max_rects = _rects(hwnd)
         wa = win.native.MaximizedBounds
         res["maximized_client_fills_window"] = max_rects["client"] == max_rects["window"]
@@ -84,8 +96,8 @@ def job(win):
         api.win_toggle_maximize(); time.sleep(0.5)
         res["restored_state"] = int(win.native.WindowState)    # 期望 0
         res["restored_api"] = not api.win_is_maximized()
-        res["restored_css"] = not bool(win.evaluate_js(
-            "document.documentElement.classList.contains('window-maximized')"))
+        res["restored_css"] = _wait_js(
+            win, "!document.documentElement.classList.contains('window-maximized')")
         restored_rects = _rects(hwnd)
         res["restored_client_fills_window"] = restored_rects["client"] == restored_rects["window"]
         res["all_pass"] = (res["thickframe_persistent"] and res["maximizebox_persistent"]

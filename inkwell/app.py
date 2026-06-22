@@ -63,6 +63,7 @@ from . import APP_NAME, __version__
 _user32 = ctypes.windll.user32
 _WM_NCLBUTTONDOWN = 0x00A1
 _WM_NCCALCSIZE = 0x0083
+_WM_GETMINMAXINFO = 0x0024
 _GWLP_WNDPROC = -4
 _HTCAPTION = 2
 _RESIZE_HT = {
@@ -83,12 +84,36 @@ _DWMWCP_DEFAULT = 0
 _DWMWCP_DONOTROUND = 1
 _DWMWA_COLOR_DEFAULT = 0xFFFFFFFF
 _DWMWA_COLOR_NONE = 0xFFFFFFFE
+_MONITOR_DEFAULTTONEAREST = 0x00000002
+
+
+class _MINMAXINFO(ctypes.Structure):
+    _fields_ = [
+        ("ptReserved", wintypes.POINT),
+        ("ptMaxSize", wintypes.POINT),
+        ("ptMaxPosition", wintypes.POINT),
+        ("ptMinTrackSize", wintypes.POINT),
+        ("ptMaxTrackSize", wintypes.POINT),
+    ]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+    ]
 
 _user32.ReleaseCapture.restype = wintypes.BOOL
 _user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 _user32.SendMessageW.restype = wintypes.LPARAM
 _user32.IsZoomed.argtypes = [wintypes.HWND]
 _user32.IsZoomed.restype = wintypes.BOOL
+_user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+_user32.MonitorFromWindow.restype = wintypes.HANDLE
+_user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_MONITORINFO)]
+_user32.GetMonitorInfoW.restype = wintypes.BOOL
 _user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                  ctypes.c_int, ctypes.c_int, wintypes.UINT]
 # 64 位用 *Ptr 变体避免 WS_POPUP(0x80000000) 的有符号溢出；32 位回退到 W 变体
@@ -118,6 +143,32 @@ _SetWndProc.restype = ctypes.c_ssize_t
 _WNDPROC_REFS = []
 
 
+def _monitor_rects_for_window(hwnd):
+    """Return (monitor_rect, work_rect) for the monitor nearest to hwnd."""
+    monitor = _user32.MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST)
+    if not monitor:
+        return None
+    info = _MONITORINFO()
+    info.cbSize = ctypes.sizeof(_MONITORINFO)
+    if not _user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        return None
+    return info.rcMonitor, info.rcWork
+
+
+def _apply_minmax_for_current_monitor(hwnd, lparam):
+    """Apply monitor-relative maximize bounds for WM_GETMINMAXINFO."""
+    rects = _monitor_rects_for_window(hwnd)
+    if not rects:
+        return False
+    monitor, work = rects
+    info = ctypes.cast(lparam, ctypes.POINTER(_MINMAXINFO)).contents
+    info.ptMaxPosition.x = work.left - monitor.left
+    info.ptMaxPosition.y = work.top - monitor.top
+    info.ptMaxSize.x = work.right - work.left
+    info.ptMaxSize.y = work.bottom - work.top
+    return True
+
+
 def _apply_window_style(hwnd, style):
     """写入完整窗口样式并让 Win32 立即重算非客户区。"""
     try:
@@ -138,6 +189,10 @@ def _install_native_chrome(hwnd):
 
     @_WNDPROC
     def _proc(h, msg, wparam, lparam):
+        if msg == _WM_GETMINMAXINFO and lparam:
+            result = _user32.CallWindowProcW(old_proc[0], h, msg, wparam, lparam)
+            _apply_minmax_for_current_monitor(h, lparam)
+            return result
         # 移除全部非客户区：无边框窗口因此不会显示系统的缩放边框/内缩白边。
         if msg == _WM_NCCALCSIZE and wparam:
             return 0
@@ -406,11 +461,18 @@ class Api:
         MaximizedBounds 后，由 WM_GETMINMAXINFO 强制最大化为精确的工作区矩形。
         必须在 UI 线程调用（WinForms 属性跨线程赋值会抛异常）。"""
         try:
-            from System.Windows.Forms import Screen
             from System.Drawing import Rectangle
             form = self._window.native
-            wa = Screen.FromControl(form).WorkingArea
-            form.MaximizedBounds = Rectangle(wa.X, wa.Y, wa.Width, wa.Height)
+            rects = _monitor_rects_for_window(self._hwnd())
+            if not rects:
+                return
+            _monitor, work = rects
+            form.MaximizedBounds = Rectangle(
+                work.left,
+                work.top,
+                work.right - work.left,
+                work.bottom - work.top,
+            )
         except Exception:
             pass
 

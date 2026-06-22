@@ -8,6 +8,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .eggs/
+.venv/
 
 # 验证脚本生成的临时结果（截图 / JSON）
 tools/_*.json
