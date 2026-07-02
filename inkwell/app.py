@@ -38,7 +38,7 @@ _SAFE_OPEN_EXTS = {
 }
 _MD_EXTS = {".md", ".markdown", ".mdown", ".mkd"}
 _READABLE_EXTS = _MD_EXTS | {".txt"}
-_MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+_MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 _PREFERENCE_KEYS = {"theme", "font"}
 
 import ctypes
@@ -252,7 +252,7 @@ def _document_path(path) -> Path:
     if p.suffix.lower() not in _READABLE_EXTS:
         raise ValueError("仅支持 Markdown 或纯文本文件")
     if p.stat().st_size > _MAX_DOCUMENT_BYTES:
-        raise ValueError("文件过大（上限 16 MB）")
+        raise ValueError("文件过大（上限 64 MB）")
     return p
 
 

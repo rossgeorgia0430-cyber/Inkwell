@@ -12,6 +12,7 @@ Inkwell - Markdown 渲染管线
 import os
 import re
 import uuid
+import base64
 import html as html_module
 import tempfile
 import shutil
@@ -130,8 +131,63 @@ def _copy_image_to_assets(local_path: Path):
     return url_path
 
 
+# data: URI 的 mime -> 落盘扩展名。仅收录图片类型；不在表内的一律拒绝落盘，
+# 交由调用方 fallback 到原始 src，再由 sanitizer 的 allowlist 兜底拦截。
+_DATA_URI_MIME_EXTS = {
+    "image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
+    "image/gif": ".gif", "image/bmp": ".bmp", "image/webp": ".webp",
+    "image/avif": ".avif", "image/svg+xml": ".svg", "image/tiff": ".tif",
+    "image/x-icon": ".ico", "image/vnd.microsoft.icon": ".ico",
+}
+_DATA_URI_RE = re.compile(r"^data:([^,]*),(.*)$", re.DOTALL)
+
+
+def _localize_data_uri(src):
+    """把 data: URI 解码落盘为 /__img__/ URL；非图片 mime 或解码失败返回 None。
+
+    内嵌图片（截图粘贴、AI 工具产出等）常以 data URI 形式出现在 Markdown/HTML 中，
+    体积可能很大且每次都会被内联进 DOM；落盘后复用现有的 /__img__/ 服务路径，
+    既能被浏览器缓存，也让 CSP／sanitizer 不必为任意 data: 内容开口子。
+    """
+    try:
+        if ASSETS_DIR is None:
+            return None
+        match = _DATA_URI_RE.match(str(src).strip())
+        if not match:
+            return None
+        header, payload = match.group(1), match.group(2)
+        if not payload:
+            return None
+
+        fields = [f.strip() for f in header.split(";")]
+        mime = (fields[0] or "").lower()
+        is_base64 = any(f.lower() == "base64" for f in fields[1:])
+        ext = _DATA_URI_MIME_EXTS.get(mime)
+        if ext is None:
+            return None
+
+        if is_base64:
+            cleaned = re.sub(r"\s+", "", payload)
+            if not cleaned:
+                return None
+            data = base64.b64decode(cleaned, validate=True)
+        else:
+            data = unquote(payload).encode("utf-8")
+        if not data:
+            return None
+
+        digest = hashlib.sha1(data).hexdigest()[:20]
+        dest_name = f"{digest}{ext}"
+        dest_path = ASSETS_DIR / dest_name
+        if not dest_path.exists():
+            dest_path.write_bytes(data)
+        return IMG_URL_PREFIX + dest_name
+    except Exception:
+        return None
+
+
 def _localize_image_url(src, base_dir):
-    """把指向本地图片的 src 转成 /__img__/ URL；远程/data 原样返回。"""
+    """把指向本地图片的 src 转成 /__img__/ URL；远程原样返回，data: 尝试落盘。"""
     if not src:
         return src
     src = str(src).strip()
@@ -141,7 +197,9 @@ def _localize_image_url(src, base_dir):
     lower = src.lower()
     if lower.startswith(("javascript:", "vbscript:")):
         return ""
-    if lower.startswith(("http://", "https://", "data:", "mailto:", "tel:")):
+    if lower.startswith("data:"):
+        return _localize_data_uri(src) or src
+    if lower.startswith(("http://", "https://", "mailto:", "tel:")):
         return src
 
     local_path = None
@@ -178,12 +236,24 @@ def _localize_image_url(src, base_dir):
     return _copy_image_to_assets(local_path) or src
 
 
+# base64 形式的 data URI 内部不含逗号（base64 字母表没有逗号），可以安全地在
+# 逗号分隔的 srcset 里原地整体替换；percent 编码形式则可能含逗号，与 srcset
+# 自身的分隔符冲突，无法安全提取，只能整体放弃交给 sanitizer 拒绝。
+_SRCSET_DATA_URI_B64_RE = re.compile(
+    r"data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+", re.IGNORECASE
+)
+
+
 def _localize_srcset(srcset, base_dir):
     if not srcset:
         return srcset
     value = str(srcset)
     if "data:" in value.lower():
-        return srcset
+        value = _SRCSET_DATA_URI_B64_RE.sub(
+            lambda m: _localize_data_uri(m.group(0)) or m.group(0), value
+        )
+        if "data:" in value.lower():
+            return srcset
     parts = []
     for item in value.split(","):
         item = item.strip()
@@ -273,8 +343,10 @@ _TAG_SAFE_ATTRS = {
 }
 _SAFE_LINK_SCHEMES = {"http", "https", "mailto", "tel"}
 _SAFE_IMAGE_SCHEMES = {"http", "https", "blob"}
+# 含 svg+xml：<img> 上下文加载的 SVG 不会执行其内嵌 <script>（浏览器按图片
+# 而非文档处理），所以放行不会打开 XSS 面；<svg> 标签本身在别处仍被丢弃。
 _SAFE_DATA_IMAGE_RE = re.compile(
-    r"^data:image/(?:avif|bmp|gif|jpeg|jpg|png|webp);(?:base64,|charset=[^,]+,)",
+    r"^data:image/(?:avif|bmp|gif|jpeg|jpg|png|svg\+xml|webp);(?:base64,|charset=[^,]+,)",
     re.IGNORECASE,
 )
 
@@ -657,11 +729,53 @@ def restore_code_blocks(html_text, placeholders):
     return html_text
 
 
+# ---------------------------------------------------------------------------
+# 行内代码保护：`...` 里的内容语义上是字面文本，不该被后续步骤当成 Markdown
+# 语法二次解析——否则 `$x$`会被 protect_latex 误判成公式，`![a](p.png)`会被
+# 图片本地化步骤改写路径。这里只是"占位挡一挡"，真正生成 <code> 仍交回给
+# python-markdown（所以还原要发生在 md.convert 之前，而不是像代码块那样在之后）。
+# ---------------------------------------------------------------------------
+_INLINE_CODE_RE = re.compile(r'(?<!`)(`+)(?!`)([^`]+?)\1(?!`)')
+
+
+def protect_inline_code(md_text):
+    placeholders = {}
+
+    def replace(match):
+        content = match.group(2)
+        # 跨越空行的反引号大概率不是同一段行内代码（更像误配对的围栏残留），
+        # 保守起见维持原文，交给后续流程按原来的（可能不完美的）方式处理。
+        if "\n\n" in content:
+            return match.group(0)
+        key = f"%%INLINECODE{uuid.uuid4().hex}%%"
+        placeholders[key] = match.group(0)
+        return key
+
+    md_text = _INLINE_CODE_RE.sub(replace, md_text)
+    return md_text, placeholders
+
+
+def restore_inline_code(text, placeholders):
+    for key, value in placeholders.items():
+        text = text.replace(key, value)
+    return text
+
+
 def render_markdown(md_text, base_dir=None):
     """Markdown -> (html, toc_html)。"""
     md_text, code_blocks = protect_code_blocks(md_text)
+    md_text, inline_code = protect_inline_code(md_text)
     md_text = _preprocess_markdown_images(md_text, base_dir)
     protected_text, placeholders = protect_latex(md_text)
+    protected_text = restore_inline_code(protected_text, inline_code)
+    # 公式内容里的反引号（如 $$a `b` c$$）也会被换成 INLINECODE 占位符，而
+    # protect_latex 把公式整段捕获进了自己的 placeholders 值里，主文本的还原
+    # 触及不到。这些值已经过 html.escape(quote=True)，若用未转义原文替换，
+    # 原文中的 < > & " 会在属性/文本上下文里重新打开注入面，所以必须用
+    # 同样转义过的原文替换。占位符本身只含 % 和字母数字，转义不改变其形态。
+    if inline_code:
+        escaped_inline = {k: html_module.escape(v, quote=True) for k, v in inline_code.items()}
+        placeholders = {k: restore_inline_code(v, escaped_inline) for k, v in placeholders.items()}
 
     md = markdown.Markdown(
         extensions=['fenced_code', 'codehilite', 'tables', 'toc',

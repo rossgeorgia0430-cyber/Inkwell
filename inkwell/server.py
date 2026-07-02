@@ -67,32 +67,75 @@ def _safe_join(base: Path, rel: str):
     return target
 
 
+# /__img__/ 目录会提供用户文档中引用/内嵌的图片，其中包括 SVG。SVG 本质上是可以带
+# <script> 的 XML 文档：如果这类文件被当作顶级文档直接打开（而不是通过 <img> 加载），
+# 脚本会在与应用页面相同的源（127.0.0.1:<port>）下执行，从而有机会接触到
+# window.pywebview 提供的 JS 桥。附加一个 sandbox 的 CSP 后，即使 SVG 被作为顶级文档
+# 打开也无法执行脚本/表单/弹窗等；作为 <img> 元素加载时浏览器本就不执行 SVG 脚本，
+# 因此正常渲染不受影响。
+_IMG_EXTRA_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    "X-Content-Type-Options": "nosniff",
+}
+
+# Host 头允许的取值（DNS rebinding 加固）：只信任回环地址本身，忽略端口号。
+# WebView2 请求会带 Host: 127.0.0.1:<port> 这类带端口的形式，需要在比较前把端口拆掉。
+_ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
+
+
+def _host_allowed(host_header: str) -> bool:
+    """校验请求的 Host 头是否为本机回环地址，抵御 DNS rebinding 攻击。"""
+    if not host_header:
+        return False
+    host = host_header.strip().lower()
+    if host in _ALLOWED_HOSTS:
+        return True
+    # 带端口号的形式：127.0.0.1:51234 / localhost:51234 / [::1]:51234
+    if host.startswith("[::1]:"):
+        return True
+    if ":" in host:
+        hostname = host.rsplit(":", 1)[0]
+        if hostname in ("127.0.0.1", "localhost"):
+            return True
+    return False
+
+
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "Inkwell/1.1.4"
+    server_version = "Inkwell/1.2.0"
 
     def log_message(self, *args):
         pass  # 静默
 
-    def _send_bytes(self, data: bytes, content_type: str, code: int = 200):
+    def _send_bytes(self, data: bytes, content_type: str, code: int = 200,
+                     extra_headers=None):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        if extra_headers:
+            for key, value in extra_headers.items():
+                self.send_header(key, value)
         self.end_headers()
         try:
             self.wfile.write(data)
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
             pass
 
-    def _send_file(self, path: Path):
+    def _send_file(self, path: Path, extra_headers=None):
         try:
             data = path.read_bytes()
         except Exception:
             self._send_bytes(b"not found", "text/plain; charset=utf-8", 404)
             return
-        self._send_bytes(data, _guess_type(path))
+        self._send_bytes(data, _guess_type(path), extra_headers=extra_headers)
 
     def do_GET(self):
+        # DNS rebinding 加固：拒绝 Host 头不是本机回环地址的请求，避免恶意网页通过
+        # 把域名解析指向 127.0.0.1 来跨源访问本地服务器。
+        if not _host_allowed(self.headers.get("Host", "")):
+            self._send_bytes(b"forbidden", "text/plain; charset=utf-8", 403)
+            return
+
         parsed = urlsplit(self.path)
         path = unquote(parsed.path)
 
@@ -115,7 +158,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             target = _safe_join(_render.ASSETS_DIR, path[len(_render.IMG_URL_PREFIX):])
             if target and target.is_file():
-                self._send_file(target)
+                self._send_file(target, extra_headers=_IMG_EXTRA_HEADERS)
                 return
             self._send_bytes(b"img not found", "text/plain; charset=utf-8", 404)
             return
