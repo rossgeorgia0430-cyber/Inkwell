@@ -14,66 +14,66 @@
   --reader-font: 15px;   /* 正文字号（Ctrl+滚轮缩放、localStorage 持久化）；默认基准（约 +10%） */
 }
 
-/* ---------- 主题：浅色（Claude 暖纸感中性 + 极少量陶土橘）---------- */
+/* ---------- 主题：浅色（清透的冷白纸面 + 石板灰层级）---------- */
 :root, [data-theme="light"] {
-  --bg: #ffffff;             /* 阅读区（内容更亮） */
-  --sidebar-bg: #efeee7;     /* 目录栏：暖中性灰，略加重于内容 */
-  --surface: #f4f3ee;        /* 代码头 / 引用底 */
-  --surface-2: #ebe9e1;      /* hover / 激活 */
+  --bg: #fbfcfe;             /* 阅读区：近白而非刺眼纯白 */
+  --sidebar-bg: #f3f6fa;     /* 目录栏：极轻的蓝灰，和正文自然分层 */
+  --surface: #f6f8fb;        /* 代码头 / 引用底 */
+  --surface-2: #e9eef5;      /* hover / 激活 */
   --elevated: #ffffff;
-  --text: #141413;           /* 暖近黑（非纯黑） */
-  --text-soft: #3d3d3a;
-  --muted: #73726c;
-  --faint: #a3a199;
-  --border: #e7e4db;
-  --border-strong: #d8d4c8;
-  --accent: #d97757;         /* Anthropic 陶土橘——仅极少量使用 */
-  --accent-hover: #c6613f;
-  --accent-soft: rgba(217,119,87,.15);
-  --code-bg: #f7f6f1;
-  --code-border: #eceae1;
-  /* 行内代码：Claude Desktop 风格——极轻的中性灰，仅比正文底略重一点点。
-     旧值 #ebe9e4 比代码块底(#f7f6f1)还深，整块显得很重/粗糙。 */
-  --inline-code-bg: #f3f1ea;
-  --inline-code-fg: #37332d;
-  --mark: #ffe3a3;
-  --mark-current: #f5b54a;
-  --var-hl: rgba(217,119,87,.18);
-  --var-hl-current: rgba(245,181,74,.6);
-  --shadow: 0 10px 30px rgba(60,55,45,.10);
-  --scroll: #dcd8cc;
-  --scroll-hover: #c7c1b1;
-  --selection: rgba(217,119,87,.16);
+  --text: #253044;           /* 正文：有呼吸感的深石板色 */
+  --text-strong: #111827;    /* 加粗与标题：清晰，但不生硬 */
+  --text-soft: #46566d;
+  --muted: #697a92;
+  --faint: #9aa8ba;
+  --border: #e4eaf1;
+  --border-strong: #d4dde8;
+  --accent: #2563eb;         /* 仅用于交互与定位，不污染正文 */
+  --accent-hover: #1d4ed8;
+  --accent-soft: rgba(37,99,235,.12);
+  --code-bg: #f7f9fc;
+  --code-border: #e2e8f0;
+  --inline-code-bg: #eef2f7;
+  --inline-code-fg: #314158;
+  --mark: #fef0b8;
+  --mark-current: #f8cf62;
+  --var-hl: rgba(37,99,235,.14);
+  --var-hl-current: rgba(96,165,250,.48);
+  --shadow: 0 12px 30px rgba(30,41,59,.10);
+  --scroll: #cbd5e1;
+  --scroll-hover: #94a3b8;
+  --selection: rgba(59,130,246,.18);
 }
 
-/* ---------- 主题：深色（Claude 暖炭灰；内容比侧栏更亮）---------- */
+/* ---------- 主题：深色（低眩光的深蓝灰，不做发脏的暖黑）---------- */
 [data-theme="dark"] {
-  --bg: #30302e;             /* 阅读区炭灰 */
-  --sidebar-bg: #262624;     /* 目录栏更深 */
-  --surface: #2a2a28;
-  --surface-2: #3a3a37;
-  --elevated: #1f1e1d;
-  --text: #f5f4ef;           /* 暖近白 */
-  --text-soft: #c2c0b6;
-  --muted: #9c9a92;
-  --faint: #76746c;
-  --border: #43423d;
-  --border-strong: #524f48;
-  --accent: #d97757;
-  --accent-hover: #e08a6c;
-  --accent-soft: rgba(217,119,87,.22);
-  --code-bg: #1f1e1d;
-  --code-border: #343330;
-  --inline-code-bg: #3a3936;
-  --inline-code-fg: #e7e4da;
-  --mark: #6b5320;
-  --mark-current: #b9862b;
-  --var-hl: rgba(217,119,87,.26);
-  --var-hl-current: rgba(245,181,74,.5);
-  --shadow: 0 14px 40px rgba(0,0,0,.5);
-  --scroll: #45433d;
-  --scroll-hover: #57544c;
-  --selection: rgba(217,119,87,.28);
+  --bg: #111827;             /* 阅读区：墨蓝灰，稳定不泛褐 */
+  --sidebar-bg: #0d1524;     /* 侧栏略沉，保留结构 */
+  --surface: #172033;
+  --surface-2: #243149;
+  --elevated: #1b2638;
+  --text: #d9e2ef;
+  --text-strong: #f8fafc;
+  --text-soft: #b5c1d1;
+  --muted: #8fa0b7;
+  --faint: #617189;
+  --border: #27364d;
+  --border-strong: #364863;
+  --accent: #60a5fa;
+  --accent-hover: #93c5fd;
+  --accent-soft: rgba(96,165,250,.18);
+  --code-bg: #0d1524;
+  --code-border: #26364e;
+  --inline-code-bg: #202c40;
+  --inline-code-fg: #d5e2f2;
+  --mark: #5c481a;
+  --mark-current: #a87316;
+  --var-hl: rgba(96,165,250,.22);
+  --var-hl-current: rgba(96,165,250,.45);
+  --shadow: 0 16px 42px rgba(0,0,0,.40);
+  --scroll: #34445c;
+  --scroll-hover: #4d607b;
+  --selection: rgba(96,165,250,.28);
 }
 
 * { box-sizing: border-box; }
@@ -264,7 +264,7 @@ button { font-family: inherit; }
 /* 标题 */
 .article h1, .article h2, .article h3,
 .article h4, .article h5, .article h6 {
-  color: var(--text);
+  color: var(--text-strong);
   font-weight: 680;
   line-height: 1.3;
   margin: 1.5em 0 .6em;
@@ -278,7 +278,8 @@ button { font-family: inherit; }
 .article h6 { font-size: .92em; color: var(--muted); }
 
 .article p { margin: .7em 0; }
-.article a { color: var(--text-soft); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px; }
+.article strong { color: var(--text-strong); font-weight: 680; }
+.article a { color: var(--accent-hover); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 34%, transparent); text-underline-offset: 2px; }
 .article a:hover { color: var(--accent); text-decoration-color: var(--accent); }
 
 .article ul, .article ol { padding-left: 1.5em; margin: .7em 0; }

@@ -26,7 +26,8 @@ def gen(style_name, filename):
 
 
 if __name__ == "__main__":
-    light = pick(["stata-light", "friendly", "default"])
-    dark = pick(["one-dark", "lightbulb", "monokai", "native"])
+    # 与应用的冷静蓝灰底色配合；避免 stata-light 的高饱和蓝绿红让代码区显脏。
+    light = pick(["xcode", "friendly", "default"])
+    dark = pick(["github-dark", "one-dark", "native"])
     gen(light, "pygments-light.css")
     gen(dark, "pygments-dark.css")
