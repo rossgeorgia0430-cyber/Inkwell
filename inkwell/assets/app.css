@@ -325,20 +325,23 @@ button { font-family: inherit; }
 /* 图片灯箱：点击正文图片后全屏查看，右上角操作与代码/公式复制保持同一手感。 */
 .image-viewer {
   position: fixed; inset: 0; z-index: 100;
-  display: flex; align-items: center; justify-content: center;
-  padding: 54px 34px 34px;
   background: rgba(12,12,11,.88); backdrop-filter: blur(8px);
   opacity: 0; pointer-events: none;
   transition: opacity var(--speed);
 }
 .image-viewer.open { opacity: 1; pointer-events: auto; }
-.image-viewer-image {
-  display: block; max-width: min(94vw, 1800px); max-height: calc(100vh - 88px);
-  width: auto; height: auto; object-fit: contain; border-radius: 8px;
-  box-shadow: 0 22px 70px rgba(0,0,0,.52); cursor: zoom-out;
-  transform: scale(.985); transition: transform var(--speed);
+.image-viewer-stage {
+  position: absolute; inset: 52px 0 62px;
+  overflow: auto; padding: 0 24px; box-sizing: border-box;
+  scrollbar-color: rgba(255,255,255,.24) transparent;
 }
-.image-viewer.open .image-viewer-image { transform: scale(1); }
+.image-viewer-image {
+  display: block; max-width: none; max-height: none;
+  width: auto; height: auto; margin-left: auto; margin-right: auto;
+  object-fit: contain; border-radius: 8px;
+  box-shadow: 0 22px 70px rgba(0,0,0,.52);
+  transition: width .12s ease-out;
+}
 .image-viewer-actions {
   position: fixed; top: 16px; right: 18px; z-index: 102;
   display: flex; align-items: center; gap: 8px;
@@ -354,6 +357,25 @@ button { font-family: inherit; }
 .image-viewer-btn.copied { color: #e1bd82; border-color: rgba(225,189,130,.65); }
 .image-viewer-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .image-viewer-close { width: 34px; padding: 0; }
+.image-viewer-zoom {
+  position: fixed; left: 50%; bottom: 14px; z-index: 102;
+  display: flex; align-items: center; gap: 5px;
+  height: 38px; padding: 0 6px;
+  border: 1px solid rgba(255,255,255,.16); border-radius: 9px;
+  background: rgba(38,37,34,.94); color: #e9e6dd;
+  box-shadow: 0 8px 30px rgba(0,0,0,.32);
+  transform: translateX(-50%);
+}
+.image-zoom-btn {
+  width: 30px; height: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 6px; background: transparent; color: inherit;
+  cursor: pointer; transition: background var(--speed), color var(--speed), opacity var(--speed);
+}
+.image-zoom-btn:hover { background: rgba(255,255,255,.10); color: #fff; }
+.image-zoom-btn:disabled { opacity: .32; cursor: default; }
+.image-zoom-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.image-zoom-level { min-width: 48px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; color: #c9c5bb; user-select: none; }
 .image-viewer-open .main { overflow: hidden; }
 
 /* 表格 */
@@ -644,3 +666,15 @@ mark.search-hit.current { background: var(--mark-current); color: #1c1300; }
 
 /* 欢迎/空态留白 */
 .article > :first-child { margin-top: 0; }
+
+/* 启动首帧：重型 Markdown / base64 图片在后台渲染时保持窗口立即可用。 */
+.initial-loading {
+  min-height: 46vh; display: flex; align-items: center; justify-content: center; gap: 10px;
+  color: var(--muted); font-size: .92em; user-select: none;
+}
+.initial-loading-spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--accent);
+  animation: inkwell-spin .75s linear infinite;
+}
+@keyframes inkwell-spin { to { transform: rotate(360deg); } }

@@ -14,6 +14,9 @@
   var selectedImage = null;
   var imageViewer = null;
   var imageViewerReturnFocus = null;
+  var imageViewerScale = 1;
+  var imageViewerFitScale = 1;
+  var imageViewerUserAdjusted = false;
 
   // ---------- 工具 ----------
   function escapeReg(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
@@ -357,18 +360,89 @@
     viewer.setAttribute("role", "dialog");
     viewer.setAttribute("aria-modal", "true");
     viewer.setAttribute("aria-label", "图片预览");
-    viewer.innerHTML = '<div class="image-viewer-actions"><button type="button" class="image-viewer-btn image-viewer-copy" aria-label="复制图片"><svg viewBox="0 0 24 24" class="copy-ico" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="1.5"/><path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6"/></svg><span class="copy-label">复制</span></button><button type="button" class="image-viewer-btn image-viewer-close" aria-label="关闭图片预览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><img class="image-viewer-image" alt="">';
+    viewer.innerHTML = '<div class="image-viewer-actions"><button type="button" class="image-viewer-btn image-viewer-copy" aria-label="复制图片"><svg viewBox="0 0 24 24" class="copy-ico" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="1.5"/><path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6"/></svg><span class="copy-label">复制</span></button><button type="button" class="image-viewer-btn image-viewer-close" aria-label="关闭图片预览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><div class="image-viewer-stage"><img class="image-viewer-image" alt=""></div><div class="image-viewer-zoom"><button type="button" class="image-zoom-btn image-zoom-out" aria-label="缩小图片" title="缩小 (Ctrl+滚轮向下)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button><span class="image-zoom-level" aria-live="polite">100%</span><button type="button" class="image-zoom-btn image-zoom-in" aria-label="放大图片" title="放大 (Ctrl+滚轮向上)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button></div>';
     var close = viewer.querySelector(".image-viewer-close");
     var preview = viewer.querySelector(".image-viewer-image");
     var copy = viewer.querySelector(".image-viewer-copy");
     close.addEventListener("click", closeImageViewer);
     copy.addEventListener("click", function () { copyImage(preview, copy); });
+    viewer.querySelector(".image-zoom-out").addEventListener("click", function () { zoomImageViewer(-1); });
+    viewer.querySelector(".image-zoom-in").addEventListener("click", function () { zoomImageViewer(1); });
+    preview.addEventListener("load", function () {
+      if (viewer.classList.contains("open")) requestAnimationFrame(fitImageViewer);
+    });
     viewer.addEventListener("click", function (e) {
-      if (e.target === viewer || e.target === preview) closeImageViewer();
+      if (e.target === viewer || e.target.classList.contains("image-viewer-stage")) closeImageViewer();
     });
     document.body.appendChild(viewer);
     imageViewer = viewer;
     return viewer;
+  }
+
+  var IMAGE_ZOOM_MIN = .02, IMAGE_ZOOM_MAX = 8, IMAGE_ZOOM_STEP = 1.2;
+
+  function imageViewerIsOpen() {
+    return !!(imageViewer && imageViewer.classList.contains("open"));
+  }
+
+  function updateImageZoomControls() {
+    if (!imageViewer) return;
+    var level = imageViewer.querySelector(".image-zoom-level");
+    var out = imageViewer.querySelector(".image-zoom-out");
+    var plus = imageViewer.querySelector(".image-zoom-in");
+    if (level) level.textContent = Math.round(imageViewerScale * 100) + "%";
+    if (out) out.disabled = imageViewerScale <= IMAGE_ZOOM_MIN + .0001;
+    if (plus) plus.disabled = imageViewerScale >= IMAGE_ZOOM_MAX - .0001;
+  }
+
+  function applyImageViewerScale(next, preserveCenter) {
+    if (!imageViewer) return;
+    var preview = imageViewer.querySelector(".image-viewer-image");
+    var stage = imageViewer.querySelector(".image-viewer-stage");
+    if (!preview || !stage || !preview.naturalWidth || !preview.naturalHeight) return;
+    next = Math.max(IMAGE_ZOOM_MIN, Math.min(IMAGE_ZOOM_MAX, next));
+    var oldWidth = preview.naturalWidth * imageViewerScale;
+    var oldHeight = preview.naturalHeight * imageViewerScale;
+    var oldTop = parseFloat(preview.style.marginTop) || 24;
+    imageViewerScale = next;
+    var width = preview.naturalWidth * next;
+    var height = preview.naturalHeight * next;
+    var top = Math.max(24, (stage.clientHeight - height) / 2);
+    preview.style.width = Math.round(width) + "px";
+    preview.style.height = "auto";
+    preview.style.marginTop = Math.round(top) + "px";
+    preview.style.marginBottom = "24px";
+    updateImageZoomControls();
+    if (preserveCenter) {
+      requestAnimationFrame(function () {
+        stage.scrollLeft += (width - oldWidth) / 2;
+        stage.scrollTop += (height - oldHeight) / 2 + (top - oldTop);
+      });
+    } else {
+      stage.scrollLeft = 0;
+      stage.scrollTop = 0;
+    }
+  }
+
+  function fitImageViewer() {
+    if (!imageViewerIsOpen()) return;
+    var preview = imageViewer.querySelector(".image-viewer-image");
+    var stage = imageViewer.querySelector(".image-viewer-stage");
+    if (!preview || !stage || !preview.naturalWidth || !preview.naturalHeight) return;
+    var availableWidth = Math.max(1, stage.clientWidth - 48);
+    var availableHeight = Math.max(1, stage.clientHeight - 48);
+    // contain 比例既会缩小超大图，也会主动放大小图来利用当前窗口空间。
+    imageViewerFitScale = Math.max(IMAGE_ZOOM_MIN, Math.min(4,
+      Math.min(availableWidth / preview.naturalWidth, availableHeight / preview.naturalHeight)));
+    imageViewerUserAdjusted = false;
+    applyImageViewerScale(imageViewerFitScale, false);
+  }
+
+  function zoomImageViewer(direction) {
+    if (!imageViewerIsOpen()) return;
+    imageViewerUserAdjusted = true;
+    var factor = direction > 0 ? IMAGE_ZOOM_STEP : (1 / IMAGE_ZOOM_STEP);
+    applyImageViewerScale(imageViewerScale * factor, true);
   }
 
   function openImageViewer(img) {
@@ -381,6 +455,8 @@
     preview.alt = img.alt || "图片预览";
     viewer.classList.add("open");
     document.body.classList.add("image-viewer-open");
+    imageViewerUserAdjusted = false;
+    if (preview.complete && preview.naturalWidth) requestAnimationFrame(fitImageViewer);
     viewer.querySelector(".image-viewer-close").focus({ preventScroll: true });
   }
 
@@ -388,6 +464,7 @@
     if (!imageViewer || !imageViewer.classList.contains("open")) return;
     imageViewer.classList.remove("open");
     document.body.classList.remove("image-viewer-open");
+    imageViewerUserAdjusted = false;
     if (imageViewerReturnFocus && imageViewerReturnFocus.isConnected) {
       imageViewerReturnFocus.focus({ preventScroll: true });
     }
@@ -788,11 +865,21 @@
     window.addEventListener("wheel", function (e) {
       if (!e.ctrlKey) return;
       e.preventDefault();
+      if (imageViewerIsOpen()) {
+        zoomImageViewer(e.deltaY < 0 ? 1 : -1);
+        return;
+      }
       setReaderFont(readerFont() + (e.deltaY < 0 ? 0.5 : -0.5));
     }, { passive: false });
     // Ctrl + 加/减/0：键盘缩放与重置
     document.addEventListener("keydown", function (e) {
       if (!(e.ctrlKey || e.metaKey)) return;
+      if (imageViewerIsOpen()) {
+        if (e.key === "=" || e.key === "+") { e.preventDefault(); zoomImageViewer(1); }
+        else if (e.key === "-") { e.preventDefault(); zoomImageViewer(-1); }
+        else if (e.key === "0") { e.preventDefault(); fitImageViewer(); }
+        return;
+      }
       if (e.key === "=" || e.key === "+") { e.preventDefault(); setReaderFont(readerFont() + 0.5); }
       else if (e.key === "-") { e.preventDefault(); setReaderFont(readerFont() - 0.5); }
       else if (e.key === "0") { e.preventDefault(); setReaderFont(FONT_DEFAULT); }
@@ -967,6 +1054,25 @@
   }
   window.__applyPayload = applyPayload;
 
+  // 启动首帧先显示轻量外壳，后台渲染完成后用此入口装载首篇文档。
+  // 与文件监视热重载不同，这里不要求 p.path 已等于 currentPath，错误页也必须可显示。
+  function applyInitialPayload(p) {
+    if (!p || p.cancelled || (p.ok === false && !p.content)) return;
+    var bootPath = (window.__BOOT__ && window.__BOOT__.path) || "";
+    // 用户可能在后台首篇渲染结束前就打开了另一篇文档；旧启动结果不能覆盖新页面。
+    if ((bootPath && currentPath && !samePath(currentPath, bootPath)) || (!bootPath && currentPath)) return;
+    if (p.path) {
+      currentPath = p.path;
+      navHistory = [{ path: p.path, anchor: "", scrollTop: 0 }];
+      navIndex = 0;
+    }
+    if (renderInto(p)) {
+      main.scrollTop = 0;
+      updateNavButtons();
+    }
+  }
+  window.__applyInitialPayload = applyInitialPayload;
+
   // ============================================================
   // 绑定与启动
   // ============================================================
@@ -1041,7 +1147,10 @@
       else if (e.key === "F3") { e.preventDefault(); nextHit(e.shiftKey ? -1 : 1); }
     });
 
-    window.addEventListener("resize", onResize);
+    window.addEventListener("resize", function () {
+      onResize();
+      if (imageViewerIsOpen() && !imageViewerUserAdjusted) requestAnimationFrame(fitImageViewer);
+    });
   }
 
   function boot() {
@@ -1079,7 +1188,16 @@
     copyPayload: buildCopyPayload,
     image: {
       toPng: imageToPngBlob, selected: function () { return selectedImage; },
-      open: openImageViewer, close: closeImageViewer
+      open: openImageViewer, close: closeImageViewer, fit: fitImageViewer,
+      zoom: zoomImageViewer,
+      state: function () {
+        var preview = imageViewer && imageViewer.querySelector(".image-viewer-image");
+        var stage = imageViewer && imageViewer.querySelector(".image-viewer-stage");
+        return { open: imageViewerIsOpen(), scale: imageViewerScale, fit: imageViewerFitScale,
+                 width: preview ? preview.getBoundingClientRect().width : 0,
+                 height: preview ? preview.getBoundingClientRect().height : 0,
+                 stageWidth: stage ? stage.clientWidth : 0, stageHeight: stage ? stage.clientHeight : 0 };
+      }
     },
     nav: {
       to: navigateToMd, back: navBack, forward: navForward,

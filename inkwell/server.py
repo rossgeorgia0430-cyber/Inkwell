@@ -18,7 +18,13 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, unquote
 
-from . import render as _render
+IMG_URL_PREFIX = "/__img__/"
+
+
+def _render_assets_dir():
+    # 延迟导入 markdown/Pygments 渲染栈；首个页面外壳不需要它们。
+    from . import render
+    return render.ASSETS_DIR
 
 
 def asset_root() -> Path:
@@ -152,11 +158,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_bytes(b"asset not found", "text/plain; charset=utf-8", 404)
             return
 
-        if path.startswith(_render.IMG_URL_PREFIX):
-            if _render.ASSETS_DIR is None:
+        if path.startswith(IMG_URL_PREFIX):
+            assets_dir = _render_assets_dir()
+            if assets_dir is None:
                 self._send_bytes(b"no img dir", "text/plain; charset=utf-8", 404)
                 return
-            target = _safe_join(_render.ASSETS_DIR, path[len(_render.IMG_URL_PREFIX):])
+            target = _safe_join(assets_dir, path[len(IMG_URL_PREFIX):])
             if target and target.is_file():
                 self._send_file(target, extra_headers=_IMG_EXTRA_HEADERS)
                 return

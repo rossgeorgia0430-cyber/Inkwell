@@ -21,6 +21,7 @@ if sys.stdout is None or sys.stderr is None:
 import json
 import html as html_module
 import io
+import importlib
 import time
 import threading
 import traceback
@@ -47,12 +48,6 @@ from ctypes import wintypes
 
 import webview
 
-try:
-    from PIL import Image
-except ImportError:  # 打包环境漏收 Pillow 时，前端 Clipboard API 仍可正常工作。
-    Image = None
-
-from . import render as _render
 from . import server as _server
 from .page import build_page
 from . import APP_NAME, __version__
@@ -149,6 +144,15 @@ _SetWndProc.restype = ctypes.c_ssize_t
 
 # 子类化回调必须保活，否则 trampoline 被 GC 后窗口收到消息即崩溃。
 _WNDPROC_REFS = []
+_RENDER_MODULE = None
+
+
+def _get_render():
+    """延迟加载 markdown/Pygments 渲染栈，让原生窗口更早出现。"""
+    global _RENDER_MODULE
+    if _RENDER_MODULE is None:
+        _RENDER_MODULE = importlib.import_module(".render", __package__)
+    return _RENDER_MODULE
 
 
 def _image_asset_path_for_copy(source):
@@ -156,6 +160,7 @@ def _image_asset_path_for_copy(source):
     if not isinstance(source, str) or not source:
         return None
     try:
+        render = _get_render()
         parts = urlsplit(source)
         # currentSrc 会被浏览器标准化为完整 http://127.0.0.1:<port>/__img__/...；
         # 只接受本机回环地址，绝不让 JS bridge 读取任意本地路径或下载远程 URL。
@@ -163,12 +168,12 @@ def _image_asset_path_for_copy(source):
             if parts.scheme not in {"http", "https"} or parts.hostname not in {"127.0.0.1", "localhost", "::1"}:
                 return None
         path = unquote(parts.path or "")
-        if not path.startswith(_render.IMG_URL_PREFIX) or _render.ASSETS_DIR is None:
+        if not path.startswith(render.IMG_URL_PREFIX) or render.ASSETS_DIR is None:
             return None
-        rel = path[len(_render.IMG_URL_PREFIX):].lstrip("/\\")
+        rel = path[len(render.IMG_URL_PREFIX):].lstrip("/\\")
         if not rel:
             return None
-        root = _render.ASSETS_DIR.resolve()
+        root = render.ASSETS_DIR.resolve()
         candidate = (root / rel).resolve()
         candidate.relative_to(root)
         return candidate if candidate.is_file() else None
@@ -231,24 +236,43 @@ def _write_dib_to_clipboard(dib):
 
 def _image_asset_to_dib(path):
     """将本地化图片编码为通用 24-bit DIB（不触碰系统剪贴板）。"""
-    if Image is None:
-        raise RuntimeError("缺少 Pillow，无法使用本机图片复制回退")
     try:
-        with Image.open(path) as raw:
-            raw.load()
-            # CF_DIB 的 24-bit RGB 兼容性最好；含透明通道的图片以白色背景合成，
-            # 避免在不支持 alpha 的目标应用中出现黑底。
-            if "A" in raw.getbands() or (raw.mode == "P" and "transparency" in raw.info):
-                rgba = raw.convert("RGBA")
-                image = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-                image.alpha_composite(rgba)
-                image = image.convert("RGB")
-            else:
-                image = raw.convert("RGB")
-            output = io.BytesIO()
-            image.save(output, format="BMP")
+        try:
+            # 开发环境通常有 Pillow；放在调用点导入，避免拖慢每次应用启动。
+            from PIL import Image
+            with Image.open(path) as raw:
+                raw.load()
+                if "A" in raw.getbands() or (raw.mode == "P" and "transparency" in raw.info):
+                    rgba = raw.convert("RGBA")
+                    image = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                    image.alpha_composite(rgba)
+                    image = image.convert("RGB")
+                else:
+                    image = raw.convert("RGB")
+                output = io.BytesIO()
+                image.save(output, format="BMP")
+                bmp = output.getvalue()
+        except ImportError:
+            # 安装包为启动速度/体积排除了 Pillow；按需复用 pywebview 已携带的
+            # System.Drawing，把图片合成到 24-bit 白底位图后再写 CF_DIB。
+            from System.Drawing import Bitmap, Color, Graphics
+            from System.Drawing.Imaging import ImageFormat, PixelFormat
+            from System.IO import MemoryStream
+            source = Bitmap(str(path))
+            bitmap = Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
+            graphics = Graphics.FromImage(bitmap)
+            stream = MemoryStream()
+            try:
+                graphics.Clear(Color.White)
+                graphics.DrawImage(source, 0, 0, source.Width, source.Height)
+                bitmap.Save(stream, ImageFormat.Bmp)
+                bmp = bytes(stream.ToArray())
+            finally:
+                stream.Dispose()
+                graphics.Dispose()
+                bitmap.Dispose()
+                source.Dispose()
         # BMP 文件头不属于 CF_DIB；Windows 剪贴板只接受后续的 DIB 数据。
-        bmp = output.getvalue()
         if len(bmp) <= 14 or bmp[:2] != b"BM":
             raise ValueError("无法生成有效图片数据")
         return bmp[14:]
@@ -347,7 +371,8 @@ WELCOME_MD = """# 欢迎使用 Inkwell
 - 右上角可切换 **浅色 / 深色** 主题
 - 代码块里 **双击**任意标识符会高亮同名 token
 - 选中文字复制到飞书等文档**不会带底色和彩色**；公式可直接复制为 LaTeX
-- 点击图片可放大查看；图片右上角可复制，选中后按 **Ctrl+C** 也可直接复制
+- 点击图片会按当前窗口自适应放大；底部按钮或 **Ctrl+滚轮** 可继续缩放
+- 图片右上角可复制，选中后按 **Ctrl+C** 也可直接复制
 
 > 用「打开文件」按钮选择一个 `.md` 文件开始，或直接双击任意 Markdown 文件。
 
@@ -438,7 +463,7 @@ class Api:
             resolved = _document_path(path)
             md_text = _read_text(resolved)
             base_dir = str(resolved.parent)
-            content, toc = _render.render_markdown(md_text, base_dir=base_dir)
+            content, toc = _get_render().render_markdown(md_text, base_dir=base_dir)
             title = resolved.name
             return {"ok": True, "title": title, "content": content,
                     "toc": toc, "path": str(resolved)}
@@ -762,19 +787,18 @@ def main():
 
     init_path = _initial_file(sys.argv)
     if init_path:
-        payload = api._render_payload(init_path)
-        if payload.get("ok"):
-            api.activate_path(payload["path"])
-            title = payload.get("title", APP_NAME)
-            content, toc = payload.get("content", ""), payload.get("toc", "")
-        else:
-            title = payload.get("title", APP_NAME)
-            content, toc = payload.get("content", ""), ""
+        title = Path(init_path).name
     else:
-        content, toc = _render.render_markdown(WELCOME_MD, base_dir=str(Path.cwd()))
         title = APP_NAME
+    # 先给 WebView 一个极轻的首帧；Markdown/Pygments 导入、base64 解码和正文
+    # 渲染全部移到页面加载后的后台线程，尤其能改善大图片文档的感知启动速度。
+    loading_name = html_module.escape(title)
+    content = (f'<div class="initial-loading" role="status" aria-live="polite">'
+               f'<span class="initial-loading-spinner"></span>'
+               f'<span>正在打开 {loading_name}…</span></div>')
+    toc = ""
 
-    _server.set_page(build_page(content, toc, title, api.current_file,
+    _server.set_page(build_page(content, toc, title, init_path,
                                 preferences=api.preferences))
     httpd, url = _server.start_server()
 
@@ -795,11 +819,39 @@ def main():
         frameless=True,
         easy_drag=False,
         text_select=True,
-        background_color="#FFFFFF",
+        background_color="#1C1C1B" if api.preferences.get("theme") == "dark" else "#FBFCFE",
         confirm_close=False,
         zoomable=False,
     )
     api._window = window
+
+    initial_render_started = threading.Event()
+
+    def _begin_initial_render(*_args):
+        if initial_render_started.is_set():
+            return
+        initial_render_started.set()
+
+        def work():
+            if init_path:
+                payload = api._render_payload(init_path)
+            else:
+                try:
+                    rendered, rendered_toc = _get_render().render_markdown(
+                        WELCOME_MD, base_dir=str(Path.cwd()))
+                    payload = {"ok": True, "title": APP_NAME,
+                               "content": rendered, "toc": rendered_toc, "path": ""}
+                except Exception as exc:
+                    error = html_module.escape(str(exc))
+                    payload = {"ok": False, "title": "错误",
+                               "content": f"<h1>无法打开欢迎页</h1><pre>{error}</pre>", "toc": ""}
+            try:
+                js = "window.__applyInitialPayload(%s)" % json.dumps(payload, ensure_ascii=False)
+                window.evaluate_js(js)
+            except Exception:
+                pass
+
+        threading.Thread(target=work, name="InkwellInitialRender", daemon=True).start()
 
     watcher = threading.Thread(target=_watch_file, args=(api,), daemon=True)
     watcher.start()
@@ -807,13 +859,15 @@ def main():
     debug = os.environ.get("INKWELL_DEBUG") == "1"
 
     def _on_closed():
-        _render.cleanup_assets()
+        if _RENDER_MODULE is not None:
+            _RENDER_MODULE.cleanup_assets()
         try:
             httpd.shutdown()
         except Exception:
             pass
 
     window.events.closed += _on_closed
+    window.events.loaded += _begin_initial_render
     # 窗口显示后（UI 线程）开启原生缩放 + Snap
     window.events.shown += lambda *a: api.init_native_chrome()
 
