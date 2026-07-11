@@ -333,14 +333,16 @@ button { font-family: inherit; }
 .image-viewer-stage {
   position: absolute; inset: 52px 0 62px;
   overflow: auto; padding: 0 24px; box-sizing: border-box;
+  scrollbar-gutter: stable;
   scrollbar-color: rgba(255,255,255,.24) transparent;
+  overscroll-behavior: contain;
 }
 .image-viewer-image {
   display: block; max-width: none; max-height: none;
   width: auto; height: auto; margin-left: auto; margin-right: auto;
   object-fit: contain; border-radius: 8px;
   box-shadow: 0 22px 70px rgba(0,0,0,.52);
-  transition: width .12s ease-out;
+  will-change: width;
 }
 .image-viewer-actions {
   position: fixed; top: 16px; right: 18px; z-index: 102;

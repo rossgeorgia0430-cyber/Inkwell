@@ -395,29 +395,41 @@
     if (plus) plus.disabled = imageViewerScale >= IMAGE_ZOOM_MAX - .0001;
   }
 
-  function applyImageViewerScale(next, preserveCenter) {
+  function applyImageViewerScale(next, preserveCenter, anchor) {
     if (!imageViewer) return;
     var preview = imageViewer.querySelector(".image-viewer-image");
     var stage = imageViewer.querySelector(".image-viewer-stage");
     if (!preview || !stage || !preview.naturalWidth || !preview.naturalHeight) return;
     next = Math.max(IMAGE_ZOOM_MIN, Math.min(IMAGE_ZOOM_MAX, next));
-    var oldWidth = preview.naturalWidth * imageViewerScale;
-    var oldHeight = preview.naturalHeight * imageViewerScale;
-    var oldTop = parseFloat(preview.style.marginTop) || 24;
+    var stageRect = stage.getBoundingClientRect();
+    var anchorClientX = anchor ? anchor.x : stageRect.left + stage.clientWidth / 2;
+    var anchorClientY = anchor ? anchor.y : stageRect.top + stage.clientHeight / 2;
+    anchorClientX = Math.max(stageRect.left, Math.min(stageRect.right, anchorClientX));
+    anchorClientY = Math.max(stageRect.top, Math.min(stageRect.bottom, anchorClientY));
+    var oldLeft = preview.offsetLeft;
+    var oldTop = preview.offsetTop;
+    var oldWidth = preview.offsetWidth || preview.naturalWidth * imageViewerScale;
+    var oldHeight = preview.offsetHeight || preview.naturalHeight * imageViewerScale;
+    var contentX = stage.scrollLeft + anchorClientX - stageRect.left;
+    var contentY = stage.scrollTop + anchorClientY - stageRect.top;
+    var imageX = oldWidth ? (contentX - oldLeft) / oldWidth : .5;
+    var imageY = oldHeight ? (contentY - oldTop) / oldHeight : .5;
     imageViewerScale = next;
     var width = preview.naturalWidth * next;
     var height = preview.naturalHeight * next;
     var top = Math.max(24, (stage.clientHeight - height) / 2);
-    preview.style.width = Math.round(width) + "px";
+    preview.style.width = width.toFixed(3) + "px";
     preview.style.height = "auto";
     preview.style.marginTop = Math.round(top) + "px";
     preview.style.marginBottom = "24px";
     updateImageZoomControls();
     if (preserveCenter) {
-      requestAnimationFrame(function () {
-        stage.scrollLeft += (width - oldWidth) / 2;
-        stage.scrollTop += (height - oldHeight) / 2 + (top - oldTop);
-      });
+      // Force layout once, then keep the same point in the image under the
+      // pointer (or viewport centre for buttons). This avoids width animation
+      // and scroll correction fighting each other during rapid wheel input.
+      void preview.offsetWidth;
+      stage.scrollLeft = preview.offsetLeft + imageX * preview.offsetWidth - (anchorClientX - stageRect.left);
+      stage.scrollTop = preview.offsetTop + imageY * preview.offsetHeight - (anchorClientY - stageRect.top);
     } else {
       stage.scrollLeft = 0;
       stage.scrollTop = 0;
@@ -443,6 +455,15 @@
     imageViewerUserAdjusted = true;
     var factor = direction > 0 ? IMAGE_ZOOM_STEP : (1 / IMAGE_ZOOM_STEP);
     applyImageViewerScale(imageViewerScale * factor, true);
+  }
+
+  function zoomImageViewerByWheel(deltaY, clientX, clientY) {
+    if (!imageViewerIsOpen()) return;
+    imageViewerUserAdjusted = true;
+    // Trackpad and wheel deltas vary widely. Exponential scaling keeps both
+    // continuous, while the clamp prevents one unusually large event jumping.
+    var factor = Math.exp(Math.max(-80, Math.min(80, -deltaY)) * .0025);
+    applyImageViewerScale(imageViewerScale * factor, true, { x: clientX, y: clientY });
   }
 
   function openImageViewer(img) {
@@ -866,7 +887,7 @@
       if (!e.ctrlKey) return;
       e.preventDefault();
       if (imageViewerIsOpen()) {
-        zoomImageViewer(e.deltaY < 0 ? 1 : -1);
+        zoomImageViewerByWheel(e.deltaY, e.clientX, e.clientY);
         return;
       }
       setReaderFont(readerFont() + (e.deltaY < 0 ? 0.5 : -0.5));
