@@ -45,35 +45,35 @@
   --selection: rgba(59,130,246,.18);
 }
 
-/* ---------- 主题：深色（低眩光的深蓝灰，不做发脏的暖黑）---------- */
+/* ---------- 主题：深色（低眩光炭灰；完全去除大面积蓝色）---------- */
 [data-theme="dark"] {
-  --bg: #111827;             /* 阅读区：墨蓝灰，稳定不泛褐 */
-  --sidebar-bg: #0d1524;     /* 侧栏略沉，保留结构 */
-  --surface: #172033;
-  --surface-2: #243149;
-  --elevated: #1b2638;
-  --text: #d9e2ef;
-  --text-strong: #f8fafc;
-  --text-soft: #b5c1d1;
-  --muted: #8fa0b7;
-  --faint: #617189;
-  --border: #27364d;
-  --border-strong: #364863;
-  --accent: #60a5fa;
-  --accent-hover: #93c5fd;
-  --accent-soft: rgba(96,165,250,.18);
-  --code-bg: #0d1524;
-  --code-border: #26364e;
-  --inline-code-bg: #202c40;
-  --inline-code-fg: #d5e2f2;
-  --mark: #5c481a;
-  --mark-current: #a87316;
-  --var-hl: rgba(96,165,250,.22);
-  --var-hl-current: rgba(96,165,250,.45);
-  --shadow: 0 16px 42px rgba(0,0,0,.40);
-  --scroll: #34445c;
-  --scroll-hover: #4d607b;
-  --selection: rgba(96,165,250,.28);
+  --bg: #1c1c1b;             /* 阅读区：中性炭灰，不偏蓝也不死黑 */
+  --sidebar-bg: #161615;     /* 侧栏略沉，保留结构 */
+  --surface: #242422;
+  --surface-2: #302f2c;
+  --elevated: #292826;
+  --text: #d8d6cf;
+  --text-strong: #f1efe8;
+  --text-soft: #b8b6ae;
+  --muted: #918f87;
+  --faint: #66645e;
+  --border: #33322f;
+  --border-strong: #45433e;
+  --accent: #c9a36a;
+  --accent-hover: #d8b77e;
+  --accent-soft: rgba(201,163,106,.17);
+  --code-bg: #20201e;
+  --code-border: #373631;
+  --inline-code-bg: #2b2a27;
+  --inline-code-fg: #dedbd2;
+  --mark: #5a471f;
+  --mark-current: #9a701f;
+  --var-hl: rgba(201,163,106,.22);
+  --var-hl-current: rgba(216,183,126,.45);
+  --shadow: 0 16px 42px rgba(0,0,0,.42);
+  --scroll: #3d3b36;
+  --scroll-hover: #58554e;
+  --selection: rgba(201,163,106,.27);
 }
 
 * { box-sizing: border-box; }
@@ -298,7 +298,63 @@ button { font-family: inherit; }
 
 .article hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
 
-.article img { max-width: 100%; height: auto; border-radius: var(--radius-sm); }
+.article img {
+  display: block; max-width: 100%; height: auto; border-radius: var(--radius-sm);
+}
+.article img[data-inkwell-copyable] { cursor: zoom-in; }
+.image-block {
+  position: relative; display: inline-block; max-width: 100%;
+  line-height: 0; vertical-align: top; border-radius: var(--radius-sm);
+}
+.image-block > a, .image-block > picture { display: block; line-height: 0; }
+.image-copy-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 4;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--border-strong); background: var(--elevated);
+  color: var(--text-soft); font-size: 12px; font-family: var(--font-sans);
+  padding: 4px 9px; border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.16);
+  cursor: pointer; opacity: 0; pointer-events: none;
+  transition: opacity var(--speed), background var(--speed), color var(--speed), border-color var(--speed);
+}
+.image-block:hover .image-copy-btn,
+.image-block:focus-within .image-copy-btn { opacity: 1; pointer-events: auto; }
+.image-copy-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
+.image-copy-btn.copied { color: var(--accent); border-color: var(--accent); }
+.image-copy-btn .copy-ico { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 图片灯箱：点击正文图片后全屏查看，右上角操作与代码/公式复制保持同一手感。 */
+.image-viewer {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  padding: 54px 34px 34px;
+  background: rgba(12,12,11,.88); backdrop-filter: blur(8px);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--speed);
+}
+.image-viewer.open { opacity: 1; pointer-events: auto; }
+.image-viewer-image {
+  display: block; max-width: min(94vw, 1800px); max-height: calc(100vh - 88px);
+  width: auto; height: auto; object-fit: contain; border-radius: 8px;
+  box-shadow: 0 22px 70px rgba(0,0,0,.52); cursor: zoom-out;
+  transform: scale(.985); transition: transform var(--speed);
+}
+.image-viewer.open .image-viewer-image { transform: scale(1); }
+.image-viewer-actions {
+  position: fixed; top: 16px; right: 18px; z-index: 102;
+  display: flex; align-items: center; gap: 8px;
+}
+.image-viewer-btn {
+  height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 0 11px; border: 1px solid rgba(255,255,255,.18);
+  border-radius: 7px; background: rgba(38,37,34,.92); color: #e9e6dd;
+  font-family: var(--font-sans); font-size: 12px; cursor: pointer;
+  transition: background var(--speed), color var(--speed), border-color var(--speed);
+}
+.image-viewer-btn:hover { background: rgba(60,58,53,.96); color: #fff; border-color: rgba(255,255,255,.28); }
+.image-viewer-btn.copied { color: #e1bd82; border-color: rgba(225,189,130,.65); }
+.image-viewer-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.image-viewer-close { width: 34px; padding: 0; }
+.image-viewer-open .main { overflow: hidden; }
 
 /* 表格 */
 .article table {
@@ -508,7 +564,7 @@ mark.search-hit.current { background: var(--mark-current); color: #1c1300; }
    ============================================================ */
 .scrim {
   position: absolute; inset: var(--tb-h) 0 0 0;
-  background: rgba(10,14,20,.42);
+  background: rgba(15,15,14,.44);
   opacity: 0; pointer-events: none;
   transition: opacity var(--speed); z-index: 18;
 }

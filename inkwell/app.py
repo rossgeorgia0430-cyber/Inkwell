@@ -20,6 +20,7 @@ if sys.stdout is None or sys.stderr is None:
 
 import json
 import html as html_module
+import io
 import time
 import threading
 import traceback
@@ -45,6 +46,11 @@ import ctypes
 from ctypes import wintypes
 
 import webview
+
+try:
+    from PIL import Image
+except ImportError:  # 打包环境漏收 Pillow 时，前端 Clipboard API 仍可正常工作。
+    Image = None
 
 from . import render as _render
 from . import server as _server
@@ -85,6 +91,8 @@ _DWMWCP_DONOTROUND = 1
 _DWMWA_COLOR_DEFAULT = 0xFFFFFFFF
 _DWMWA_COLOR_NONE = 0xFFFFFFFE
 _MONITOR_DEFAULTTONEAREST = 0x00000002
+_CF_DIB = 8
+_GMEM_MOVEABLE = 0x0002
 
 
 class _MINMAXINFO(ctypes.Structure):
@@ -141,6 +149,116 @@ _SetWndProc.restype = ctypes.c_ssize_t
 
 # 子类化回调必须保活，否则 trampoline 被 GC 后窗口收到消息即崩溃。
 _WNDPROC_REFS = []
+
+
+def _image_asset_path_for_copy(source):
+    """把前端图片 URL 严格限制到本进程的 /__img__/ 临时资源目录。"""
+    if not isinstance(source, str) or not source:
+        return None
+    try:
+        parts = urlsplit(source)
+        # currentSrc 会被浏览器标准化为完整 http://127.0.0.1:<port>/__img__/...；
+        # 只接受本机回环地址，绝不让 JS bridge 读取任意本地路径或下载远程 URL。
+        if parts.scheme:
+            if parts.scheme not in {"http", "https"} or parts.hostname not in {"127.0.0.1", "localhost", "::1"}:
+                return None
+        path = unquote(parts.path or "")
+        if not path.startswith(_render.IMG_URL_PREFIX) or _render.ASSETS_DIR is None:
+            return None
+        rel = path[len(_render.IMG_URL_PREFIX):].lstrip("/\\")
+        if not rel:
+            return None
+        root = _render.ASSETS_DIR.resolve()
+        candidate = (root / rel).resolve()
+        candidate.relative_to(root)
+        return candidate if candidate.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
+def _write_dib_to_clipboard(dib):
+    """写入标准 CF_DIB。成功后 Windows 接管 GlobalAlloc 的内存所有权。"""
+    if not dib:
+        raise ValueError("图片数据为空")
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.restype = wintypes.HGLOBAL
+    _user32.OpenClipboard.argtypes = [wintypes.HWND]
+    _user32.OpenClipboard.restype = wintypes.BOOL
+    _user32.EmptyClipboard.restype = wintypes.BOOL
+    _user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    _user32.SetClipboardData.restype = wintypes.HANDLE
+    _user32.CloseClipboard.restype = wintypes.BOOL
+
+    handle = kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(dib))
+    if not handle:
+        raise OSError("无法分配剪贴板内存")
+    try:
+        ptr = kernel32.GlobalLock(handle)
+        if not ptr:
+            raise OSError("无法锁定剪贴板内存")
+        try:
+            ctypes.memmove(ptr, dib, len(dib))
+        finally:
+            kernel32.GlobalUnlock(handle)
+
+        # 其他应用可能瞬时占用剪贴板；短暂重试可避免偶发复制失败。
+        opened = False
+        for _ in range(12):
+            if _user32.OpenClipboard(None):
+                opened = True
+                break
+            time.sleep(0.025)
+        if not opened:
+            raise OSError("剪贴板正被其他应用占用")
+        try:
+            if not _user32.EmptyClipboard():
+                raise OSError("无法清空剪贴板")
+            if not _user32.SetClipboardData(_CF_DIB, handle):
+                raise OSError("无法写入图片到剪贴板")
+            handle = None  # SetClipboardData 成功后由系统释放。
+        finally:
+            _user32.CloseClipboard()
+    finally:
+        if handle:
+            kernel32.GlobalFree(handle)
+
+
+def _image_asset_to_dib(path):
+    """将本地化图片编码为通用 24-bit DIB（不触碰系统剪贴板）。"""
+    if Image is None:
+        raise RuntimeError("缺少 Pillow，无法使用本机图片复制回退")
+    try:
+        with Image.open(path) as raw:
+            raw.load()
+            # CF_DIB 的 24-bit RGB 兼容性最好；含透明通道的图片以白色背景合成，
+            # 避免在不支持 alpha 的目标应用中出现黑底。
+            if "A" in raw.getbands() or (raw.mode == "P" and "transparency" in raw.info):
+                rgba = raw.convert("RGBA")
+                image = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                image.alpha_composite(rgba)
+                image = image.convert("RGB")
+            else:
+                image = raw.convert("RGB")
+            output = io.BytesIO()
+            image.save(output, format="BMP")
+        # BMP 文件头不属于 CF_DIB；Windows 剪贴板只接受后续的 DIB 数据。
+        bmp = output.getvalue()
+        if len(bmp) <= 14 or bmp[:2] != b"BM":
+            raise ValueError("无法生成有效图片数据")
+        return bmp[14:]
+    except Exception as exc:
+        raise RuntimeError(f"复制图片失败：{exc}") from exc
+
+
+def _copy_asset_image_to_clipboard(path):
+    """将本地化图片写入 Windows 剪贴板，供 Word、飞书等程序直接粘贴。"""
+    _write_dib_to_clipboard(_image_asset_to_dib(path))
 
 
 def _monitor_rects_for_window(hwnd):
@@ -229,6 +347,7 @@ WELCOME_MD = """# 欢迎使用 Inkwell
 - 右上角可切换 **浅色 / 深色** 主题
 - 代码块里 **双击**任意标识符会高亮同名 token
 - 选中文字复制到飞书等文档**不会带底色和彩色**；公式可直接复制为 LaTeX
+- 点击图片可放大查看；图片右上角可复制，选中后按 **Ctrl+C** 也可直接复制
 
 > 用「打开文件」按钮选择一个 `.md` 文件开始，或直接双击任意 Markdown 文件。
 
@@ -438,6 +557,17 @@ class Api:
                     return {"ok": True}
                 return {"ok": False, "error": "出于安全考虑未打开该类型文件：%s" % abspath}
             return {"ok": False, "error": "无法打开：%s" % href}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def copy_image(self, source):
+        """前端 Clipboard API 不可用时，复制本进程已本地化的图片资源。"""
+        path = _image_asset_path_for_copy(source)
+        if path is None:
+            return {"ok": False, "error": "仅能复制当前文档中的本地或内嵌图片"}
+        try:
+            _copy_asset_image_to_clipboard(path)
+            return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

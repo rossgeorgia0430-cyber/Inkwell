@@ -11,6 +11,9 @@
   var content, main, app, sidebar, toc, dragRegion, docTitle;
   var currentPath = null;
   var headings = [];
+  var selectedImage = null;
+  var imageViewer = null;
+  var imageViewerReturnFocus = null;
 
   // ---------- 工具 ----------
   function escapeReg(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
@@ -168,7 +171,7 @@
       host.replaceWith(document.createTextNode(tex != null ? (marker + tex + marker) : (k.textContent || "")));
     });
     // step 1: 删除纯 UI 元素
-    holder.querySelectorAll(".code-copy-btn, .code-copy-float, .math-copy-btn, .code-block-header")
+    holder.querySelectorAll(".code-copy-btn, .code-copy-float, .math-copy-btn, .image-copy-btn, .code-block-header")
       .forEach(function (b) { b.remove(); });
     // step 2: 拆掉所有 span（彻底去除 Pygments 着色与高亮）
     holder.querySelectorAll("span").forEach(unwrap);
@@ -180,6 +183,8 @@
       el.removeAttribute("data-latex");
       el.removeAttribute("data-filepath");
       el.removeAttribute("data-lang");
+      el.removeAttribute("data-inkwell-copyable");
+      el.removeAttribute("tabindex");
       if (el.hasAttribute("style")) {
         STRIP_PROPS.forEach(function (p) { el.style.removeProperty(p); });
         if (!el.getAttribute("style")) el.removeAttribute("style");
@@ -225,18 +230,179 @@
   function onCopy(e) {
     try {
       var p = buildCopyPayload(window.getSelection());
-      if (!p) return;
-      if (e.clipboardData) {
+      if (p && e.clipboardData) {
         e.clipboardData.setData("text/html", p.html);
         e.clipboardData.setData("text/plain", p.plain);
         e.preventDefault();
         e.stopImmediatePropagation();
+        return;
+      }
+      // 图片被点击或通过 Tab 聚焦后，Ctrl+C 直接复制像素内容而非图片 URL。
+      if (selectedImage && selectedImage.isConnected) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        var imageButton = selectedImage.closest(".image-block");
+        copyImage(selectedImage, imageButton && imageButton.querySelector(".image-copy-btn"));
       }
     } catch (err) { /* 出错则放行默认复制 */ }
   }
 
   // ============================================================
-  // 3) 代码块双击高亮（VSCode 风格）
+  // 3) 图片复制：悬停按钮 + 点击图片后 Ctrl+C
+  // ============================================================
+  function imageToPngBlob(img) {
+    return new Promise(function (resolve, reject) {
+      if (!img || !img.complete || !img.naturalWidth || !img.naturalHeight) {
+        reject(new Error("图片尚未加载完成"));
+        return;
+      }
+      try {
+        var canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        var ctx = canvas.getContext("2d");
+        if (!ctx) { reject(new Error("浏览器不支持图片绘制")); return; }
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(function (blob) {
+          if (blob) resolve(blob);
+          else reject(new Error("无法编码图片"));
+        }, "image/png");
+      } catch (err) {
+        // 跨域图片没有 CORS 许可时，canvas 会被污染；随后回退到本机 bridge。
+        reject(err);
+      }
+    });
+  }
+
+  function copyImageThroughHost(img) {
+    var a = api();
+    var source = img && (img.currentSrc || img.src);
+    if (!a || !a.copy_image || !source) {
+      return Promise.reject(new Error("当前环境无法复制这张图片"));
+    }
+    return Promise.resolve(a.copy_image(source)).then(function (result) {
+      if (result && result.ok) return result;
+      throw new Error((result && result.error) || "无法复制这张图片");
+    });
+  }
+
+  function copyImage(img, btn) {
+    if (!img) return;
+    imageToPngBlob(img).then(function (png) {
+      if (!navigator.clipboard || !navigator.clipboard.write || !window.ClipboardItem) {
+        throw new Error("浏览器不支持图片剪贴板 API");
+      }
+      return navigator.clipboard.write([new window.ClipboardItem({ "image/png": png })]);
+    }).catch(function () {
+      // pywebview / WebView2 权限策略不允许异步 Clipboard API 时，复制临时本地化资源。
+      return copyImageThroughHost(img);
+    }).then(function () {
+      if (btn) flash(btn, "已复制");
+      else toast("图片已复制");
+    }).catch(function (err) {
+      toast((err && err.message) || "图片复制失败");
+    });
+  }
+
+  function clearSelectedImage() {
+    selectedImage = null;
+  }
+
+  function selectImage(img) {
+    if (!img || !content.contains(img)) return;
+    selectedImage = img;
+  }
+
+  function createImageCopyButton() {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "image-copy-btn";
+    btn.setAttribute("data-copy-action", "image");
+    btn.setAttribute("aria-label", "复制图片");
+    btn.innerHTML = '<svg viewBox="0 0 24 24" class="copy-ico" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="1.5"/><path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6"/></svg><span class="copy-label">复制</span>';
+    return btn;
+  }
+
+  function wrapImage(img) {
+    var existing = img.closest(".image-block");
+    if (existing) return existing;
+    var host = img;
+    if (host.parentElement && host.parentElement.tagName === "PICTURE") host = host.parentElement;
+    if (host.parentElement && host.parentElement.tagName === "A") host = host.parentElement;
+    var parent = host.parentNode;
+    if (!parent) return null;
+    var block = document.createElement("span");
+    block.className = "image-block";
+    parent.insertBefore(block, host);
+    block.appendChild(host);
+    block.appendChild(createImageCopyButton());
+    return block;
+  }
+
+  function setupImageCopySupport(root) {
+    clearSelectedImage();
+    root.querySelectorAll("img").forEach(function (img) {
+      if (img.getAttribute("data-inkwell-copyable") === "true") return;
+      img.setAttribute("data-inkwell-copyable", "true");
+      if (!img.hasAttribute("tabindex")) img.tabIndex = 0;
+      wrapImage(img);
+      img.addEventListener("mousedown", function () { selectImage(img); });
+    });
+  }
+
+  function ensureImageViewer() {
+    if (imageViewer) return imageViewer;
+    var viewer = document.createElement("div");
+    viewer.className = "image-viewer";
+    viewer.setAttribute("role", "dialog");
+    viewer.setAttribute("aria-modal", "true");
+    viewer.setAttribute("aria-label", "图片预览");
+    viewer.innerHTML = '<div class="image-viewer-actions"><button type="button" class="image-viewer-btn image-viewer-copy" aria-label="复制图片"><svg viewBox="0 0 24 24" class="copy-ico" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="1.5"/><path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6"/></svg><span class="copy-label">复制</span></button><button type="button" class="image-viewer-btn image-viewer-close" aria-label="关闭图片预览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><img class="image-viewer-image" alt="">';
+    var close = viewer.querySelector(".image-viewer-close");
+    var preview = viewer.querySelector(".image-viewer-image");
+    var copy = viewer.querySelector(".image-viewer-copy");
+    close.addEventListener("click", closeImageViewer);
+    copy.addEventListener("click", function () { copyImage(preview, copy); });
+    viewer.addEventListener("click", function (e) {
+      if (e.target === viewer || e.target === preview) closeImageViewer();
+    });
+    document.body.appendChild(viewer);
+    imageViewer = viewer;
+    return viewer;
+  }
+
+  function openImageViewer(img) {
+    if (!img || !img.currentSrc && !img.src) return;
+    var viewer = ensureImageViewer();
+    var preview = viewer.querySelector(".image-viewer-image");
+    imageViewerReturnFocus = img;
+    selectImage(img);
+    preview.src = img.currentSrc || img.src;
+    preview.alt = img.alt || "图片预览";
+    viewer.classList.add("open");
+    document.body.classList.add("image-viewer-open");
+    viewer.querySelector(".image-viewer-close").focus({ preventScroll: true });
+  }
+
+  function closeImageViewer() {
+    if (!imageViewer || !imageViewer.classList.contains("open")) return;
+    imageViewer.classList.remove("open");
+    document.body.classList.remove("image-viewer-open");
+    if (imageViewerReturnFocus && imageViewerReturnFocus.isConnected) {
+      imageViewerReturnFocus.focus({ preventScroll: true });
+    }
+  }
+
+  function onContentImageClick(e) {
+    var img = e.target.closest && e.target.closest(".image-block img");
+    if (!img || !content.contains(img)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    openImageViewer(img);
+  }
+
+  // ============================================================
+  // 4) 代码块双击高亮（VSCode 风格）
   // ============================================================
   function getWordAtPoint(x, y) {
     var pos = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
@@ -336,15 +502,19 @@
     var btn = e.target.closest && e.target.closest("[data-copy-action]");
     if (!btn || !content.contains(btn)) return;
     var action = btn.getAttribute("data-copy-action");
-    if (action !== "latex" && action !== "code") return;
+    if (action !== "latex" && action !== "code" && action !== "image") return;
     e.preventDefault();
     e.stopPropagation();
     if (action === "latex") copyLatex(btn);
-    else copyCode(btn);
+    else if (action === "code") copyCode(btn);
+    else {
+      var block = btn.closest(".image-block");
+      copyImage(block && block.querySelector("img"), btn);
+    }
   }
 
   // ============================================================
-  // 4) 目录：滚动高亮 + 点击跳转
+  // 5) 目录：滚动高亮 + 点击跳转
   // ============================================================
   function collectHeadings() {
     headings = Array.prototype.slice.call(
@@ -652,6 +822,7 @@
     clearVarHighlights();
     renderMath(content);
     addCodeCopyButtons(content);
+    setupImageCopySupport(content);
     collectHeadings();
     activeLink = null;          // 换文件后旧目录链接失效，重置激活引用
     unlockSpy();
@@ -812,7 +983,11 @@
     $("navBack").addEventListener("click", navBack);
     $("navForward").addEventListener("click", navForward);
     content.addEventListener("click", onContentActionClick);
+    content.addEventListener("click", onContentImageClick);
     content.addEventListener("click", onContentLinkClick);
+    content.addEventListener("mousedown", function (e) {
+      if (!(e.target.closest && e.target.closest("img"))) clearSelectedImage();
+    });
 
     // 窗口控制（拖动 / 双击最大化由 setupWindowDrag 处理）
     $("winMin").addEventListener("click", function () { var a = api(); if (a) a.win_minimize(); });
@@ -859,7 +1034,8 @@
       else if (e.altKey && e.key === "ArrowLeft") { e.preventDefault(); navBack(); }
       else if (e.altKey && e.key === "ArrowRight") { e.preventDefault(); navForward(); }
       else if (e.key === "Escape") {
-        if (searchBar.classList.contains("open")) closeSearch();
+        if (imageViewer && imageViewer.classList.contains("open")) closeImageViewer();
+        else if (searchBar.classList.contains("open")) closeSearch();
         else clearVarHighlights();
       }
       else if (e.key === "F3") { e.preventDefault(); nextHit(e.shiftKey ? -1 : 1); }
@@ -901,6 +1077,10 @@
     sanitize: sanitizeForCopy, render: renderMath,
     highlight: highlightToken, clearHL: clearVarHighlights, runSearch: runSearch,
     copyPayload: buildCopyPayload,
+    image: {
+      toPng: imageToPngBlob, selected: function () { return selectedImage; },
+      open: openImageViewer, close: closeImageViewer
+    },
     nav: {
       to: navigateToMd, back: navBack, forward: navForward,
       state: function () {
