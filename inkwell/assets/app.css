@@ -508,6 +508,30 @@ button { font-family: inherit; }
 .code-copy-btn:hover { background: var(--surface-2); color: var(--text); }
 .code-copy-btn.copied { color: var(--accent); }
 
+/* Mermaid：默认显示图示，标题栏可在图示与原始源码间切换。 */
+.mermaid-toggle-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; background: transparent;
+  color: var(--muted); font-size: 12px;
+  padding: 4px 9px; border-radius: 6px;
+  cursor: pointer; transition: background var(--speed), color var(--speed);
+  white-space: nowrap;
+}
+.mermaid-toggle-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.mermaid-toggle-btn:hover { background: var(--surface-2); color: var(--text); }
+.mermaid-toggle-btn[aria-pressed="true"] { color: var(--accent); }
+.mermaid-diagram {
+  display: none; overflow: auto; padding: 18px;
+  background: var(--code-bg); min-height: 92px;
+}
+.mermaid-block.is-diagram .codehilite { display: none; }
+.mermaid-block.is-diagram .mermaid-diagram { display: block; }
+.mermaid-diagram > svg { display: block; height: auto; max-width: none; margin: 0 auto; }
+.mermaid-loading, .mermaid-error {
+  padding: 18px; color: var(--muted); font-size: 13px; text-align: center;
+}
+.mermaid-error { color: var(--faint); }
+
 /* 公式复制按钮 */
 .math-copy-btn-base {}
 

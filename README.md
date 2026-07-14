@@ -7,7 +7,7 @@
 
 - **无边框现代界面**：自定义标题栏（文件名 + 工具按钮 + 窗口控制），浅色 / 深色主题（记忆上次选择）。
 - **目录 / 搜索**：左侧自动生成目录，滚动高亮当前位置、点击跳转；`Ctrl+F` 全文搜索（高亮 + 上下跳转）。
-- **公式与代码渲染**：KaTeX 离线渲染 LaTeX；Pygments 语法高亮；带文件名的代码块（``` lang:path）。
+- **公式、图示与代码渲染**：KaTeX 离线渲染 LaTeX；` ```mermaid ` 离线绘制图示，标题栏可切换「图示 / 原始代码」；Pygments 语法高亮；带文件名的代码块（``` lang:path）。
 - **Base64 内嵌图片**：支持 `![图](data:image/png;base64,...)` 这类 data URI 直接渲染，无需图片文件存在于本地路径；内嵌图片会自动解码落盘到临时目录，经内置服务器提供，避免 base64 常驻 DOM。
 - **图片查看与复制**：点击图片后按当前窗口比例自适应放大；底部按钮或 `Ctrl+滚轮` 可继续缩放；图片右上角可直接复制像素内容到飞书、Word 等应用。
 - **飞书友好复制**：选中正文复制后，粘贴到飞书 / Word **不带底色、不带彩色文字**（自动净化为黑字无背景），同时保留标题 / 加粗 / 列表 / 表格结构。
@@ -75,7 +75,7 @@ powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1
 
 - Python 3.12，`pywebview`、`markdown`、`pygments`；打包用 `pyinstaller`。
 - 运行依赖系统 **WebView2 运行时**（Windows 11 默认自带；安装脚本会检测并提示）。
-- KaTeX 已离线打包（`assets/katex/`），无需联网。
+- KaTeX 与 Mermaid 均已离线打包（`assets/katex/`、`assets/mermaid/`），无需联网；Mermaid 只在文档实际包含 Mermaid 围栏时加载。
 
 ## 技术说明
 

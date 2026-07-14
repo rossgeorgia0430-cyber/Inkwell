@@ -5,6 +5,7 @@ Inkwell - Markdown 渲染管线
 - 本地图片本地化（拷贝到临时目录，经内置服务器以 /__img__/ 提供）
 - LaTeX 公式保护（保留原始 TeX 于 data-latex，供 KaTeX 渲染与复制）
 - 带文件路径的代码块（``` lang:path）包装语言标签 / 文件名 / 复制按钮
+- Mermaid 围栏块保留源码，并交由前端离线绘制为可切换图示
 
 本模块从旧 MDReader.py 的渲染部分移植而来，去掉了 http.server / 浏览器相关代码。
 """
@@ -674,20 +675,39 @@ def _build_code_html(lang, filepath, code):
     label = html_module.escape(_label_for(lang))
     esc_lang = html_module.escape(lang)
     esc_path = html_module.escape(filepath) if filepath else ''
+    is_mermaid = lang.strip().lower() == 'mermaid'
 
     badge = f'<span class="code-lang">{label}</span>' if label else '<span class="code-lang code-lang-plain">代码</span>'
     pathspan = f'<span class="code-filepath">{esc_path}</span>' if esc_path else '<span class="code-filepath"></span>'
+    mermaid_toggle = ''
+    mermaid_attrs = ''
+    if is_mermaid:
+        # HTML 属性会规范化换行；以 UTF-8 base64 传到前端，既保留源码，
+        # 也不会让文档里的引号或标签参与页面结构解析。
+        source = base64.b64encode(code.encode('utf-8')).decode('ascii')
+        mermaid_attrs = f' data-mermaid-source="{source}"'
+        mermaid_toggle = (
+            '<button class="mermaid-toggle-btn" type="button" '
+            'data-mermaid-action="toggle" aria-pressed="false" title="查看图示">'
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="6" r="2"/>'
+            '<circle cx="19" cy="6" r="2"/><circle cx="12" cy="18" r="2"/>'
+            '<path d="M7 7.2l3.8 8M17 7.2l-3.8 8M7 6h10"/></svg>'
+            '<span class="mermaid-toggle-label">图示</span></button>'
+        )
     header = (
-        f'<div class="code-block-wrapper" data-lang="{esc_lang}"'
+        f'<div class="code-block-wrapper' + (' mermaid-block' if is_mermaid else '')
+        + f'" data-lang="{esc_lang}"{mermaid_attrs}'
         + (f' data-filepath="{esc_path}"' if esc_path else '') + '>'
         f'<div class="code-block-header">'
         f'{badge}{pathspan}'
+        f'{mermaid_toggle}'
         f'<button class="code-copy-btn" data-copy-action="code" title="复制代码">'
         f'<svg viewBox="0 0 24 24" class="copy-ico"><rect x="9" y="9" width="11" height="11" rx="2"/>'
         f'<path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><span class="copy-label">复制</span></button>'
         f'</div>'
     )
-    return header + body + '</div>'
+    diagram = '<div class="mermaid-diagram" role="img" aria-label="Mermaid 图示"></div>' if is_mermaid else ''
+    return header + body + diagram + '</div>'
 
 
 def protect_code_blocks(md_text):
