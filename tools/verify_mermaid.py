@@ -57,6 +57,12 @@ def probe(window):
         assert "flowchart TB" in window.evaluate_js(
             "document.querySelector('.mermaid-block pre').textContent"
         )
+        diagram_text = window.evaluate_js("document.querySelector('.mermaid-diagram svg').textContent")
+        assert "Client" in diagram_text and "Native" in diagram_text
+        result["initial_label_containers"] = window.evaluate_js(
+            "document.querySelectorAll('.mermaid-diagram foreignObject').length"
+        )
+        assert result["initial_label_containers"] > 0
 
         # 图示 -> 原始代码 -> 图示：源码必须仍在 DOM 中，复制按钮才能始终复制原文。
         result["stage"] = "source-toggle"
@@ -70,13 +76,34 @@ def probe(window):
         window.evaluate_js("document.querySelector('.mermaid-toggle-btn').click()")
         assert wait_js(window, "!!document.querySelector('.mermaid-block.is-diagram .mermaid-diagram svg')")
 
-        # 切换主题会重绘当前图示；输出 SVG 中不能残留可执行或可导航节点。
+        # 切换到深色主题会重绘当前图示。必须等待本次异步渲染完成，
+        # 不能只看到上一帧 SVG：Mermaid v11 的节点标签位于 foreignObject 中。
         result["stage"] = "theme-refresh"
+        if window.evaluate_js("document.documentElement.getAttribute('data-theme')") == "dark":
+            window.evaluate_js("document.getElementById('themeBtn').click()")
+            assert wait_js(
+                window,
+                "document.querySelector('.mermaid-block').getAttribute('data-mermaid-rendered-theme') === 'neutral'",
+            )
         window.evaluate_js("document.getElementById('themeBtn').click()")
-        assert wait_js(window, "!!document.querySelector('.mermaid-block.is-diagram .mermaid-diagram svg')")
+        assert wait_js(window, "document.documentElement.getAttribute('data-theme') === 'dark'")
+        assert wait_js(
+            window,
+            "document.querySelector('.mermaid-block').getAttribute('data-mermaid-rendered-theme') === 'dark'",
+        )
+        result["dark_visible_labels"] = window.evaluate_js(
+            "Array.prototype.filter.call(document.querySelectorAll('.mermaid-diagram foreignObject'), "
+            "function(node) { var box = node.getBoundingClientRect(); return (node.textContent || '').trim() && "
+            "box.width > 0 && box.height > 0; }).length"
+        )
+        assert result["dark_visible_labels"] > 0
+        dark_diagram_text = window.evaluate_js("document.querySelector('.mermaid-diagram svg').textContent")
+        assert "Client" in dark_diagram_text and "Native" in dark_diagram_text
+
+        # 输出 SVG 中不能残留可执行或可导航节点。
         result["stage"] = "svg-safety"
         result["unsafe_svg_nodes"] = window.evaluate_js(
-            "document.querySelectorAll('.mermaid-diagram script, .mermaid-diagram foreignObject, "
+            "document.querySelectorAll('.mermaid-diagram script, "
             ".mermaid-diagram iframe').length + Array.prototype.filter.call("
             "document.querySelectorAll('.mermaid-diagram *'), function(n) { return "
             "n.hasAttribute('onclick') || n.hasAttribute('href') || n.hasAttribute('xlink:href'); }).length"

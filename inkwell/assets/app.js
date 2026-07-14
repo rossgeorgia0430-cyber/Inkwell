@@ -336,11 +336,12 @@
     if (notify) toast("Mermaid 图示无法渲染，已保留原始代码");
   }
 
-  // Mermaid 在 strict 模式下已编码图中用户文本。这里再移除一切可执行/导航节点，
-  // 让本地 Markdown 里的图示无法借 SVG 触及 pywebview 桥或外部链接。
+  // Mermaid 在 strict 模式下已编码图中用户文本。foreignObject 是 Mermaid v11
+  // 绘制节点标签所必需的安全文本容器，不能整体删除；其余可执行/导航节点仍移除。
+  // 这样本地 Markdown 的图示既保留文字，也无法借 SVG 触及 pywebview 桥或外部链接。
   function insertSafeMermaidSvg(host, svgText) {
     host.innerHTML = svgText;
-    host.querySelectorAll("script, foreignObject, iframe, object, embed, audio, video, animate, set").forEach(function (node) {
+    host.querySelectorAll("script, iframe, object, embed, audio, video, animate, set").forEach(function (node) {
       node.remove();
     });
     host.querySelectorAll("style").forEach(function (node) {
