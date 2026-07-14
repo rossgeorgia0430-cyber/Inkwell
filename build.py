@@ -74,6 +74,7 @@ def verify():
         "icon.ico",
         "katex/katex.min.css",
         "katex/katex.min.js",
+        "mermaid/mermaid.min.js",
         "pygments-light.css",
         "pygments-dark.css",
     ):
