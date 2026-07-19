@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """Inkwell PyInstaller 打包配置（onedir，pywebview/WebView2 + pythonnet + 离线资源）。"""
 import os
+import sys
 from PyInstaller.utils.hooks import collect_all
 
 ROOT = SPECPATH  # noqa: F821  (PyInstaller 注入)
@@ -27,6 +28,14 @@ for pkg in ("webview", "pygments", "markdown"):
     datas += d
     binaries += b
     hiddenimports += h
+
+# Conda 环境修复：Anaconda 的部分 .pyd（pyexpat/_ctypes/_bz2/_lzma）依赖
+# Library/bin 下的 DLL，PyInstaller 不会自动收集，缺失会导致冻结程序启动即崩。
+_conda_libbin = os.path.join(os.path.dirname(sys.executable), "Library", "bin")
+for _dll in ("libexpat.dll", "ffi.dll", "libbz2.dll", "liblzma.dll"):
+    _p = os.path.join(_conda_libbin, _dll)
+    if os.path.isfile(_p):
+        binaries.append((_p, "."))
 
 ICON = os.path.join("inkwell", "assets", "icon.ico")
 
