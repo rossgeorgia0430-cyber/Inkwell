@@ -680,6 +680,7 @@ def _build_code_html(lang, filepath, code):
     badge = f'<span class="code-lang">{label}</span>' if label else '<span class="code-lang code-lang-plain">代码</span>'
     pathspan = f'<span class="code-filepath">{esc_path}</span>' if esc_path else '<span class="code-filepath"></span>'
     mermaid_toggle = ''
+    mermaid_zoom = ''
     mermaid_attrs = ''
     if is_mermaid:
         # HTML 属性会规范化换行；以 UTF-8 base64 传到前端，既保留源码，
@@ -694,13 +695,20 @@ def _build_code_html(lang, filepath, code):
             '<path d="M7 7.2l3.8 8M17 7.2l-3.8 8M7 6h10"/></svg>'
             '<span class="mermaid-toggle-label">图示</span></button>'
         )
+        mermaid_zoom = (
+            '<button class="mermaid-toggle-btn mermaid-zoom-btn" type="button" '
+            'data-mermaid-action="zoom" title="放大查看图示">'
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/>'
+            '<path d="M15.5 15.5L21 21M10.5 7.5v6M7.5 10.5h6"/></svg>'
+            '<span class="mermaid-toggle-label">放大</span></button>'
+        )
     header = (
         f'<div class="code-block-wrapper' + (' mermaid-block' if is_mermaid else '')
         + f'" data-lang="{esc_lang}"{mermaid_attrs}'
         + (f' data-filepath="{esc_path}"' if esc_path else '') + '>'
         f'<div class="code-block-header">'
         f'{badge}{pathspan}'
-        f'{mermaid_toggle}'
+        f'{mermaid_toggle}{mermaid_zoom}'
         f'<button class="code-copy-btn" data-copy-action="code" title="复制代码">'
         f'<svg viewBox="0 0 24 24" class="copy-ico"><rect x="9" y="9" width="11" height="11" rx="2"/>'
         f'<path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><span class="copy-label">复制</span></button>'

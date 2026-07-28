@@ -819,7 +819,7 @@ def main():
         frameless=True,
         easy_drag=False,
         text_select=True,
-        background_color="#1C1C1B" if api.preferences.get("theme") == "dark" else "#FBFCFE",
+        background_color="#1E1D1A" if api.preferences.get("theme") == "dark" else "#F7F5EF",
         confirm_close=False,
         zoomable=False,
     )

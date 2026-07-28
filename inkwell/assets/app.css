@@ -14,66 +14,66 @@
   --reader-font: 15px;   /* 正文字号（Ctrl+滚轮缩放、localStorage 持久化）；默认基准（约 +10%） */
 }
 
-/* ---------- 主题：浅色（清透的冷白纸面 + 石板灰层级）---------- */
+/* ---------- 主题：浅色（宣纸暖白 + 松绿点缀的书页质感）---------- */
 :root, [data-theme="light"] {
-  --bg: #fbfcfe;             /* 阅读区：近白而非刺眼纯白 */
-  --sidebar-bg: #f3f6fa;     /* 目录栏：极轻的蓝灰，和正文自然分层 */
-  --surface: #f6f8fb;        /* 代码头 / 引用底 */
-  --surface-2: #e9eef5;      /* hover / 激活 */
-  --elevated: #ffffff;
-  --text: #253044;           /* 正文：有呼吸感的深石板色 */
-  --text-strong: #111827;    /* 加粗与标题：清晰，但不生硬 */
-  --text-soft: #46566d;
-  --muted: #697a92;
-  --faint: #9aa8ba;
-  --border: #e4eaf1;
-  --border-strong: #d4dde8;
-  --accent: #2563eb;         /* 仅用于交互与定位，不污染正文 */
-  --accent-hover: #1d4ed8;
-  --accent-soft: rgba(37,99,235,.12);
-  --code-bg: #f7f9fc;
-  --code-border: #e2e8f0;
-  --inline-code-bg: #eef2f7;
-  --inline-code-fg: #314158;
-  --mark: #fef0b8;
-  --mark-current: #f8cf62;
-  --var-hl: rgba(37,99,235,.14);
-  --var-hl-current: rgba(96,165,250,.48);
-  --shadow: 0 12px 30px rgba(30,41,59,.10);
-  --scroll: #cbd5e1;
-  --scroll-hover: #94a3b8;
-  --selection: rgba(59,130,246,.18);
+  --bg: #f7f5ef;             /* 阅读区：暖调纸面，避免冷白刺眼 */
+  --sidebar-bg: #f1efe8;     /* 目录栏：略沉的米灰，和正文自然分层 */
+  --surface: #f0ede5;        /* 代码头 / 引用底 */
+  --surface-2: #e7e3d8;      /* hover / 激活 */
+  --elevated: #fcfbf7;
+  --text: #33302a;           /* 正文：暖墨色，长时间阅读不疲劳 */
+  --text-strong: #1c1a15;    /* 加粗与标题：清晰，但不生硬 */
+  --text-soft: #4d4941;
+  --muted: #6f6a5e;
+  --faint: #9b9689;
+  --border: #e3dfd3;
+  --border-strong: #d0cbba;
+  --accent: #3f6e5b;         /* 松绿：仅用于交互与定位，不污染正文 */
+  --accent-hover: #315a49;
+  --accent-soft: rgba(63,110,91,.12);
+  --code-bg: #f3f1e9;
+  --code-border: #e1ddce;
+  --inline-code-bg: #ece9df;
+  --inline-code-fg: #42403a;
+  --mark: #f3e3ac;
+  --mark-current: #eac55e;
+  --var-hl: rgba(63,110,91,.13);
+  --var-hl-current: rgba(87,132,113,.38);
+  --shadow: 0 14px 34px rgba(64,56,36,.13);
+  --scroll: #c7c1b1;
+  --scroll-hover: #a29b87;
+  --selection: rgba(63,110,91,.17);
 }
 
-/* ---------- 主题：深色（低眩光炭灰；完全去除大面积蓝色）---------- */
+/* ---------- 主题：深色（暖墨黑纸面 + 金墨点缀；去除冷灰蓝光感）---------- */
 [data-theme="dark"] {
-  --bg: #1c1c1b;             /* 阅读区：中性炭灰，不偏蓝也不死黑 */
-  --sidebar-bg: #161615;     /* 侧栏略沉，保留结构 */
-  --surface: #242422;
-  --surface-2: #302f2c;
-  --elevated: #292826;
-  --text: #d8d6cf;
-  --text-strong: #f1efe8;
-  --text-soft: #b8b6ae;
-  --muted: #918f87;
-  --faint: #66645e;
-  --border: #33322f;
-  --border-strong: #45433e;
-  --accent: #c9a36a;
-  --accent-hover: #d8b77e;
-  --accent-soft: rgba(201,163,106,.17);
-  --code-bg: #20201e;
-  --code-border: #373631;
-  --inline-code-bg: #2b2a27;
-  --inline-code-fg: #dedbd2;
-  --mark: #5a471f;
-  --mark-current: #9a701f;
-  --var-hl: rgba(201,163,106,.22);
-  --var-hl-current: rgba(216,183,126,.45);
-  --shadow: 0 16px 42px rgba(0,0,0,.42);
-  --scroll: #3d3b36;
-  --scroll-hover: #58554e;
-  --selection: rgba(201,163,106,.27);
+  --bg: #1e1d1a;             /* 阅读区：暖墨黑，不死黑也不泛蓝 */
+  --sidebar-bg: #191814;     /* 侧栏略沉，保留结构 */
+  --surface: #272521;
+  --surface-2: #322f29;
+  --elevated: #2b2924;
+  --text: #d5d1c5;
+  --text-strong: #ede9db;
+  --text-soft: #b3afa2;
+  --muted: #8d897b;
+  --faint: #605d53;
+  --border: #333129;
+  --border-strong: #464337;
+  --accent: #c9a45f;
+  --accent-hover: #dcb978;
+  --accent-soft: rgba(201,164,95,.16);
+  --code-bg: #23221d;
+  --code-border: #3a372d;
+  --inline-code-bg: #2d2b26;
+  --inline-code-fg: #ddd8c8;
+  --mark: #56451d;
+  --mark-current: #93701f;
+  --var-hl: rgba(201,164,95,.22);
+  --var-hl-current: rgba(220,185,120,.42);
+  --shadow: 0 16px 44px rgba(0,0,0,.46);
+  --scroll: #423f36;
+  --scroll-hover: #5b5748;
+  --selection: rgba(201,164,95,.26);
 }
 
 * { box-sizing: border-box; }
@@ -133,9 +133,11 @@ button { font-family: inherit; }
   pointer-events: none;
 }
 .brand {
-  font-size: 13.5px;
-  font-weight: 650;
-  letter-spacing: .2px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .3px;
   color: var(--text);
   padding: 0 6px 0 2px;
 }
@@ -704,3 +706,21 @@ mark.search-hit.current { background: var(--mark-current); color: #1c1300; }
   animation: inkwell-spin .75s linear infinite;
 }
 @keyframes inkwell-spin { to { transform: rotate(360deg); } }
+
+/* ============================================================
+   灯箱：SVG 图示内容 + 右键拖动平移 + 操作提示
+   ============================================================ */
+/* Mermaid 图示与正文图片一致：点击进入灯箱放大查看。 */
+.mermaid-block.is-diagram .mermaid-diagram { cursor: zoom-in; }
+
+/* 灯箱内的 SVG 图示（与 .image-viewer-image 共用同一套缩放/滚动体系）。 */
+.image-viewer-svg {
+  display: block; max-width: none; margin-left: auto; margin-right: auto;
+  border-radius: 8px; background: var(--code-bg);
+  box-shadow: 0 22px 70px rgba(0,0,0,.52);
+  will-change: width;
+}
+/* 右键按住拖动平移：抓取手感 + 拖动期间挂起子元素指针事件，避免 SVG/图片原生拖拽干扰。 */
+.image-viewer-stage.panning { cursor: grabbing; }
+.image-viewer-stage.panning * { pointer-events: none; }
+.image-zoom-hint { font-size: 11px; color: #8f8b81; padding: 0 6px 0 2px; user-select: none; }

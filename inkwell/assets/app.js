@@ -17,6 +17,10 @@
   var imageViewerScale = 1;
   var imageViewerFitScale = 1;
   var imageViewerUserAdjusted = false;
+  var imageViewerKind = "image";          // "image" | "svg"（Mermaid 图示复用同一灯箱）
+  var imageViewerNatural = { w: 0, h: 0 };
+  var imageViewerSvg = null;
+  var imagePan = null;                    // 右键按住拖动平移状态
 
   // ---------- 工具 ----------
   function escapeReg(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
@@ -404,6 +408,27 @@
     renderMermaidBlock(block, true);
   }
 
+  // 灯箱放大查看 Mermaid 图示：未渲染时先渲染，成功后克隆进灯箱。
+  function zoomMermaid(block) {
+    if (!block) return;
+    var existing = block.querySelector(".mermaid-diagram svg");
+    if (existing) { openSvgViewer(existing); return; }
+    renderMermaidBlock(block, true).then(function (ok) {
+      var svg = ok && block.querySelector(".mermaid-diagram svg");
+      if (svg) openSvgViewer(svg);
+    });
+  }
+
+  // 点击图示本体也能进入灯箱，与点击图片的交互保持一致。
+  function onContentDiagramClick(e) {
+    var diagram = e.target.closest && e.target.closest(".mermaid-diagram");
+    if (!diagram || !content.contains(diagram)) return;
+    var block = diagram.closest(".mermaid-block");
+    if (!block || !block.classList.contains("is-diagram")) return;
+    e.preventDefault();
+    zoomMermaid(block);
+  }
+
   function initMermaidDiagrams(root) {
     if (!root) return;
     root.querySelectorAll(".mermaid-block[data-mermaid-source]").forEach(function (block) {
@@ -530,12 +555,13 @@
     viewer.setAttribute("role", "dialog");
     viewer.setAttribute("aria-modal", "true");
     viewer.setAttribute("aria-label", "图片预览");
-    viewer.innerHTML = '<div class="image-viewer-actions"><button type="button" class="image-viewer-btn image-viewer-copy" aria-label="复制图片"><svg viewBox="0 0 24 24" class="copy-ico" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="1.5"/><path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6"/></svg><span class="copy-label">复制</span></button><button type="button" class="image-viewer-btn image-viewer-close" aria-label="关闭图片预览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><div class="image-viewer-stage"><img class="image-viewer-image" alt=""></div><div class="image-viewer-zoom"><button type="button" class="image-zoom-btn image-zoom-out" aria-label="缩小图片" title="缩小 (Ctrl+滚轮向下)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button><span class="image-zoom-level" aria-live="polite">100%</span><button type="button" class="image-zoom-btn image-zoom-in" aria-label="放大图片" title="放大 (Ctrl+滚轮向上)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button></div>';
+    viewer.innerHTML = '<div class="image-viewer-actions"><button type="button" class="image-viewer-btn image-viewer-copy" aria-label="复制图片"><svg viewBox="0 0 24 24" class="copy-ico" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="1.5"/><path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6"/></svg><span class="copy-label">复制</span></button><button type="button" class="image-viewer-btn image-viewer-close" aria-label="关闭图片预览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><div class="image-viewer-stage"><img class="image-viewer-image" alt=""></div><div class="image-viewer-zoom"><button type="button" class="image-zoom-btn image-zoom-out" aria-label="缩小图片" title="缩小 (Ctrl+滚轮向下)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button><span class="image-zoom-level" aria-live="polite">100%</span><button type="button" class="image-zoom-btn image-zoom-in" aria-label="放大图片" title="放大 (Ctrl+滚轮向上)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button><span class="image-zoom-hint">右键拖动平移</span></div>';
     var close = viewer.querySelector(".image-viewer-close");
     var preview = viewer.querySelector(".image-viewer-image");
     var copy = viewer.querySelector(".image-viewer-copy");
+    var stage = viewer.querySelector(".image-viewer-stage");
     close.addEventListener("click", closeImageViewer);
-    copy.addEventListener("click", function () { copyImage(preview, copy); });
+    copy.addEventListener("click", function () { copyViewerContent(copy); });
     viewer.querySelector(".image-zoom-out").addEventListener("click", function () { zoomImageViewer(-1); });
     viewer.querySelector(".image-zoom-in").addEventListener("click", function () { zoomImageViewer(1); });
     preview.addEventListener("load", function () {
@@ -544,6 +570,28 @@
     viewer.addEventListener("click", function (e) {
       if (e.target === viewer || e.target.classList.contains("image-viewer-stage")) closeImageViewer();
     });
+    // 右键按住拖动平移：内容超出视口时直接抓取拖动，代替滚动条；
+    // 灯箱内右键只作平移，因此屏蔽系统右键菜单避免干扰。
+    stage.addEventListener("mousedown", function (e) {
+      if (e.button !== 2) return;
+      e.preventDefault();
+      imagePan = { x: e.clientX, y: e.clientY, left: stage.scrollLeft, top: stage.scrollTop, moved: false };
+      stage.classList.add("panning");
+    });
+    window.addEventListener("mousemove", function (e) {
+      if (!imagePan) return;
+      var dx = e.clientX - imagePan.x, dy = e.clientY - imagePan.y;
+      if (!imagePan.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+      imagePan.moved = true;
+      stage.scrollLeft = imagePan.left - dx;
+      stage.scrollTop = imagePan.top - dy;
+    });
+    window.addEventListener("mouseup", function (e) {
+      if (!imagePan || e.button !== 2) return;
+      endImagePan();
+    });
+    window.addEventListener("blur", endImagePan);   // 拖出窗口松开时复位
+    viewer.addEventListener("contextmenu", function (e) { e.preventDefault(); });
     document.body.appendChild(viewer);
     imageViewer = viewer;
     return viewer;
@@ -565,41 +613,64 @@
     if (plus) plus.disabled = imageViewerScale >= IMAGE_ZOOM_MAX - .0001;
   }
 
+  // 灯箱当前缩放的内容元素：图片是 <img>，Mermaid 图示是克隆的 <svg>。
+  function viewerContentEl() {
+    if (!imageViewer) return null;
+    if (imageViewerKind === "svg") return imageViewerSvg;
+    return imageViewer.querySelector(".image-viewer-image");
+  }
+
+  // 图片模式的固有尺寸来自 <img>.naturalWidth；SVG 模式在打开时已写入。
+  function syncViewerNatural() {
+    if (imageViewerKind !== "image" || !imageViewer) return;
+    var preview = imageViewer.querySelector(".image-viewer-image");
+    if (preview && preview.naturalWidth && preview.naturalHeight) {
+      imageViewerNatural.w = preview.naturalWidth;
+      imageViewerNatural.h = preview.naturalHeight;
+    }
+  }
+
   function applyImageViewerScale(next, preserveCenter, anchor) {
     if (!imageViewer) return;
-    var preview = imageViewer.querySelector(".image-viewer-image");
+    syncViewerNatural();
+    var content = viewerContentEl();
     var stage = imageViewer.querySelector(".image-viewer-stage");
-    if (!preview || !stage || !preview.naturalWidth || !preview.naturalHeight) return;
+    if (!content || !stage || !imageViewerNatural.w || !imageViewerNatural.h) return;
     next = Math.max(IMAGE_ZOOM_MIN, Math.min(IMAGE_ZOOM_MAX, next));
     var stageRect = stage.getBoundingClientRect();
     var anchorClientX = anchor ? anchor.x : stageRect.left + stage.clientWidth / 2;
     var anchorClientY = anchor ? anchor.y : stageRect.top + stage.clientHeight / 2;
     anchorClientX = Math.max(stageRect.left, Math.min(stageRect.right, anchorClientX));
     anchorClientY = Math.max(stageRect.top, Math.min(stageRect.bottom, anchorClientY));
-    var oldLeft = preview.offsetLeft;
-    var oldTop = preview.offsetTop;
-    var oldWidth = preview.offsetWidth || preview.naturalWidth * imageViewerScale;
-    var oldHeight = preview.offsetHeight || preview.naturalHeight * imageViewerScale;
+    // 用 getBoundingClientRect 统一度量：<img> 与 <svg> 都适用
+    // （offsetLeft/offsetWidth 只存在于 HTMLElement，SVG 元素上是 undefined）。
+    var oldRect = content.getBoundingClientRect();
+    var oldLeft = oldRect.left - stageRect.left + stage.scrollLeft;
+    var oldTop = oldRect.top - stageRect.top + stage.scrollTop;
+    var oldWidth = oldRect.width || imageViewerNatural.w * imageViewerScale;
+    var oldHeight = oldRect.height || imageViewerNatural.h * imageViewerScale;
     var contentX = stage.scrollLeft + anchorClientX - stageRect.left;
     var contentY = stage.scrollTop + anchorClientY - stageRect.top;
     var imageX = oldWidth ? (contentX - oldLeft) / oldWidth : .5;
     var imageY = oldHeight ? (contentY - oldTop) / oldHeight : .5;
     imageViewerScale = next;
-    var width = preview.naturalWidth * next;
-    var height = preview.naturalHeight * next;
+    var width = imageViewerNatural.w * next;
+    var height = imageViewerNatural.h * next;
     var top = Math.max(24, (stage.clientHeight - height) / 2);
-    preview.style.width = width.toFixed(3) + "px";
-    preview.style.height = "auto";
-    preview.style.marginTop = Math.round(top) + "px";
-    preview.style.marginBottom = "24px";
+    content.style.width = width.toFixed(3) + "px";
+    // <img> 按宽度等比自适应；<svg> 需要显式高度才能稳定占位。
+    content.style.height = imageViewerKind === "svg" ? height.toFixed(3) + "px" : "auto";
+    content.style.marginTop = Math.round(top) + "px";
+    content.style.marginBottom = "24px";
     updateImageZoomControls();
     if (preserveCenter) {
-      // Force layout once, then keep the same point in the image under the
-      // pointer (or viewport centre for buttons). This avoids width animation
-      // and scroll correction fighting each other during rapid wheel input.
-      void preview.offsetWidth;
-      stage.scrollLeft = preview.offsetLeft + imageX * preview.offsetWidth - (anchorClientX - stageRect.left);
-      stage.scrollTop = preview.offsetTop + imageY * preview.offsetHeight - (anchorClientY - stageRect.top);
+      // 读取 getBoundingClientRect 会强制一次布局，拿到新尺寸下的真实位置，
+      // 再把同一图像点保持在指针（或视口中心）之下——避免宽度动画与滚动修正打架。
+      var newRect = content.getBoundingClientRect();
+      var newLeft = newRect.left - stageRect.left + stage.scrollLeft;
+      var newTop = newRect.top - stageRect.top + stage.scrollTop;
+      stage.scrollLeft = newLeft + imageX * newRect.width - (anchorClientX - stageRect.left);
+      stage.scrollTop = newTop + imageY * newRect.height - (anchorClientY - stageRect.top);
     } else {
       stage.scrollLeft = 0;
       stage.scrollTop = 0;
@@ -608,14 +679,14 @@
 
   function fitImageViewer() {
     if (!imageViewerIsOpen()) return;
-    var preview = imageViewer.querySelector(".image-viewer-image");
-    var stage = imageViewer.querySelector(".image-viewer-stage");
-    if (!preview || !stage || !preview.naturalWidth || !preview.naturalHeight) return;
+    syncViewerNatural();
+    var stage = imageViewer && imageViewer.querySelector(".image-viewer-stage");
+    if (!stage || !imageViewerNatural.w || !imageViewerNatural.h) return;
     var availableWidth = Math.max(1, stage.clientWidth - 48);
     var availableHeight = Math.max(1, stage.clientHeight - 48);
     // contain 比例既会缩小超大图，也会主动放大小图来利用当前窗口空间。
     imageViewerFitScale = Math.max(IMAGE_ZOOM_MIN, Math.min(4,
-      Math.min(availableWidth / preview.naturalWidth, availableHeight / preview.naturalHeight)));
+      Math.min(availableWidth / imageViewerNatural.w, availableHeight / imageViewerNatural.h)));
     imageViewerUserAdjusted = false;
     applyImageViewerScale(imageViewerFitScale, false);
   }
@@ -640,6 +711,10 @@
     if (!img || !img.currentSrc && !img.src) return;
     var viewer = ensureImageViewer();
     var preview = viewer.querySelector(".image-viewer-image");
+    // 从 SVG 模式切回图片：撤下 staged svg、恢复 <img> 显示。
+    if (imageViewerSvg) { imageViewerSvg.remove(); imageViewerSvg = null; }
+    preview.style.display = "";
+    imageViewerKind = "image";
     imageViewerReturnFocus = img;
     selectImage(img);
     preview.src = img.currentSrc || img.src;
@@ -651,14 +726,133 @@
     viewer.querySelector(".image-viewer-close").focus({ preventScroll: true });
   }
 
+  // Mermaid 图示灯箱：克隆渲染好的 SVG，与图片共享缩放 / 右键平移 / 关闭交互。
+  function openSvgViewer(svg) {
+    if (!svg) return;
+    var viewer = ensureImageViewer();
+    var stage = viewer.querySelector(".image-viewer-stage");
+    var preview = viewer.querySelector(".image-viewer-image");
+    // 固有尺寸：优先 viewBox（矢量固有尺寸），退回当前渲染尺寸。
+    var w = 0, h = 0;
+    var vb = (svg.getAttribute("viewBox") || "").trim().split(/[\s,]+/);
+    if (vb.length === 4) {
+      w = parseFloat(vb[2]) || 0;
+      h = parseFloat(vb[3]) || 0;
+    }
+    if (!w || !h) {
+      var rect = svg.getBoundingClientRect();
+      w = rect.width; h = rect.height;
+    }
+    if (!w || !h) return;
+    // 保留原 id：Mermaid 内嵌 <style> 与 marker 的 url(#…) 引用都按 id 寻址，
+    // 克隆体沿用同一 id 时样式与箭头仍然命中（文档内原图与克隆体内容一致）。
+    var clone = svg.cloneNode(true);
+    clone.setAttribute("class", "image-viewer-svg");
+    clone.setAttribute("width", w);
+    clone.setAttribute("height", h);
+    clone.style.maxWidth = "none";
+    if (imageViewerSvg) imageViewerSvg.remove();
+    imageViewerSvg = clone;
+    preview.style.display = "none";
+    stage.appendChild(clone);
+    imageViewerKind = "svg";
+    imageViewerNatural = { w: w, h: h };
+    imageViewerReturnFocus = svg.closest(".mermaid-diagram") || svg;
+    viewer.classList.add("open");
+    document.body.classList.add("image-viewer-open");
+    imageViewerUserAdjusted = false;
+    requestAnimationFrame(fitImageViewer);
+    viewer.querySelector(".image-viewer-close").focus({ preventScroll: true });
+  }
+
   function closeImageViewer() {
     if (!imageViewer || !imageViewer.classList.contains("open")) return;
+    endImagePan();
     imageViewer.classList.remove("open");
     document.body.classList.remove("image-viewer-open");
     imageViewerUserAdjusted = false;
     if (imageViewerReturnFocus && imageViewerReturnFocus.isConnected) {
       imageViewerReturnFocus.focus({ preventScroll: true });
     }
+  }
+
+  function endImagePan() {
+    imagePan = null;
+    if (!imageViewer) return;
+    var stage = imageViewer.querySelector(".image-viewer-stage");
+    if (stage) stage.classList.remove("panning");
+  }
+
+  // 灯箱复制：图片直接复制像素；Mermaid 图示序列化后栅格化成 PNG 再复制。
+  function copyViewerContent(btn) {
+    if (!imageViewer) return;
+    if (imageViewerKind === "svg" && imageViewerSvg) {
+      copySvgAsPng(imageViewerSvg, btn);
+      return;
+    }
+    copyImage(imageViewer.querySelector(".image-viewer-image"), btn);
+  }
+
+  function copySvgAsPng(svg, btn) {
+    svgToPngBlob(svg).then(function (png) {
+      if (!navigator.clipboard || !navigator.clipboard.write || !window.ClipboardItem) {
+        throw new Error("浏览器不支持图片剪贴板 API");
+      }
+      return navigator.clipboard.write([new window.ClipboardItem({ "image/png": png })]);
+    }).then(function () {
+      if (btn) flash(btn, "已复制");
+      else toast("图示已复制");
+    }).catch(function (err) {
+      toast((err && err.message) || "图示复制失败");
+    });
+  }
+
+  function svgToPngBlob(svg) {
+    return new Promise(function (resolve, reject) {
+      var w = imageViewerNatural.w, h = imageViewerNatural.h;
+      if (!svg || !w || !h) { reject(new Error("图示尚未就绪")); return; }
+      // 栅格化按 2 倍输出保证清晰度，同时限制在 4096px 内避免巨型画布。
+      var scale = Math.max(1, Math.min(2, 4096 / Math.max(w, h)));
+      var cw = Math.round(w * scale), ch = Math.round(h * scale);
+      var clone = svg.cloneNode(true);
+      clone.setAttribute("width", cw);
+      clone.setAttribute("height", ch);
+      clone.style.width = cw + "px";
+      clone.style.height = ch + "px";
+      clone.style.maxWidth = "none";
+      var xml;
+      try {
+        xml = new XMLSerializer().serializeToString(clone);
+      } catch (err) { reject(err); return; }
+      var url = URL.createObjectURL(new Blob([xml], { type: "image/svg+xml;charset=utf-8" }));
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var canvas = document.createElement("canvas");
+          canvas.width = cw; canvas.height = ch;
+          var ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("浏览器不支持图片绘制");
+          // SVG 透明底：垫上当前主题的代码底色，粘贴到飞书/Word 才不会发黑。
+          var bg = getComputedStyle(document.documentElement).getPropertyValue("--code-bg") || "#ffffff";
+          ctx.fillStyle = bg.trim();
+          ctx.fillRect(0, 0, cw, ch);
+          ctx.drawImage(img, 0, 0, cw, ch);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(function (blob) {
+            if (blob) resolve(blob);
+            else reject(new Error("无法编码图片"));
+          }, "image/png");
+        } catch (err) {
+          URL.revokeObjectURL(url);
+          reject(err);
+        }
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        reject(new Error("无法读取图示"));
+      };
+      img.src = url;
+    });
   }
 
   function onContentImageClick(e) {
@@ -767,11 +961,14 @@
   }
 
   function onContentActionClick(e) {
-    var mermaidButton = e.target.closest && e.target.closest("[data-mermaid-action='toggle']");
+    var mermaidButton = e.target.closest && e.target.closest("[data-mermaid-action]");
     if (mermaidButton && content.contains(mermaidButton)) {
       e.preventDefault();
       e.stopPropagation();
-      toggleMermaid(mermaidButton.closest(".mermaid-block"));
+      var mAction = mermaidButton.getAttribute("data-mermaid-action");
+      var mBlock = mermaidButton.closest(".mermaid-block");
+      if (mAction === "toggle") toggleMermaid(mBlock);
+      else if (mAction === "zoom") zoomMermaid(mBlock);
       return;
     }
     var btn = e.target.closest && e.target.closest("[data-copy-action]");
@@ -1290,6 +1487,7 @@
     $("navForward").addEventListener("click", navForward);
     content.addEventListener("click", onContentActionClick);
     content.addEventListener("click", onContentImageClick);
+    content.addEventListener("click", onContentDiagramClick);
     content.addEventListener("click", onContentLinkClick);
     content.addEventListener("mousedown", function (e) {
       if (!(e.target.closest && e.target.closest("img"))) clearSelectedImage();
@@ -1389,19 +1587,21 @@
     image: {
       toPng: imageToPngBlob, selected: function () { return selectedImage; },
       open: openImageViewer, close: closeImageViewer, fit: fitImageViewer,
-      zoom: zoomImageViewer,
+      zoom: zoomImageViewer, openSvg: openSvgViewer,
       state: function () {
-        var preview = imageViewer && imageViewer.querySelector(".image-viewer-image");
+        var el = viewerContentEl();
         var stage = imageViewer && imageViewer.querySelector(".image-viewer-stage");
         return { open: imageViewerIsOpen(), scale: imageViewerScale, fit: imageViewerFitScale,
-                 width: preview ? preview.getBoundingClientRect().width : 0,
-                 height: preview ? preview.getBoundingClientRect().height : 0,
+                 kind: imageViewerKind, panning: !!imagePan,
+                 width: el ? el.getBoundingClientRect().width : 0,
+                 height: el ? el.getBoundingClientRect().height : 0,
                  stageWidth: stage ? stage.clientWidth : 0, stageHeight: stage ? stage.clientHeight : 0 };
       }
     },
     mermaid: {
       render: renderMermaidBlock,
       toggle: toggleMermaid,
+      zoom: zoomMermaid,
       state: function (block) {
         block = block || content.querySelector(".mermaid-block");
         if (!block) return null;

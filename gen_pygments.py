@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""生成 Pygments 浅/深两套代码高亮 CSS（作用域 .codehilite）。"""
+"""生成 Pygments 浅/深两套代码高亮 CSS（作用域 .codehilite）。
+
+浅色 inkwell-light：暖纸面上的日间配色——墨绿关键字、赭石字符串、暗紫常量，
+替代 xcode 的冷白底 + 品红/亮蓝（“IDE 感”过重，与纸面阅读气质不符）。
+深色 inkwell-dark：低饱和暖中性的夜间配色，避免大面积蓝色造成视觉疲劳。
+"""
 import os
 from pygments.formatters import HtmlFormatter
 from pygments.style import Style
-from pygments.styles import get_all_styles
 from pygments.token import (
     Comment, Error, Generic, Keyword, Literal, Name, Number,
     Operator, Punctuation, String, Text,
@@ -12,31 +16,61 @@ from pygments.token import (
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inkwell", "assets")
 
 
-def pick(preferred):
-    available = set(get_all_styles())
-    for s in preferred:
-        if s in available:
-            return s
-    return "default"
+class InkwellLightStyle(Style):
+    """暖纸面（#f3f1e9）上的日间代码配色，与 app.css 浅色主题同源。"""
+
+    background_color = "#f3f1e9"
+    highlight_color = "#e9e5d6"
+    styles = {
+        Text:                  "#33302a",
+        Text.Whitespace:       "#b9b4a4",
+        Error:                 "#a63a30",
+        Comment:               "italic #8a8577",
+        Keyword:               "#3e6b59",
+        Keyword.Constant:      "#6b5ca5",
+        Keyword.Type:          "#8a6d3b",
+        Operator:              "#5f5a4e",
+        Operator.Word:         "#3e6b59",
+        Punctuation:           "#6e695b",
+        Name:                  "#33302a",
+        Name.Builtin:          "#8a6d3b",
+        Name.Class:            "bold #6b4fa2",
+        Name.Constant:         "#6b5ca5",
+        Name.Decorator:        "#6b4fa2",
+        Name.Exception:        "#6b4fa2",
+        Name.Function:         "bold #31597f",
+        Name.Tag:              "#3e6b59",
+        Name.Variable:         "#33302a",
+        Literal:               "#7a5c2e",
+        String:                "#8f4e33",
+        String.Escape:         "#b07a2a",
+        Number:                "#6b5ca5",
+        Generic.Deleted:       "#a63a30",
+        Generic.Inserted:      "#4e7a45",
+        Generic.Heading:       "bold #3e6b59",
+        Generic.Subheading:    "#8a6d3b",
+        Generic.Emph:          "italic",
+        Generic.Strong:        "bold",
+    }
 
 
 class InkwellDarkStyle(Style):
     """低饱和暖中性的夜间代码配色，避免大面积蓝色造成视觉疲劳。"""
 
-    background_color = "#20201e"
-    highlight_color = "#35332e"
+    background_color = "#23221d"
+    highlight_color = "#36332b"
     styles = {
-        Text:                  "#d8d5cc",
-        Text.Whitespace:       "#5f5d57",
+        Text:                  "#d6d2c6",
+        Text.Whitespace:       "#5e5b52",
         Error:                 "#df8585",
-        Comment:               "italic #7f7d75",
+        Comment:               "italic #8f8b7e",
         Keyword:               "#d6a56f",
         Keyword.Constant:      "#c6a7cf",
         Keyword.Type:          "#cfbd82",
         Operator:              "#bdb9ae",
         Operator.Word:         "#d6a56f",
         Punctuation:           "#aaa79f",
-        Name:                  "#d8d5cc",
+        Name:                  "#d6d2c6",
         Name.Builtin:          "#cfbd82",
         Name.Class:            "bold #d4bf83",
         Name.Constant:         "#c6a7cf",
@@ -44,8 +78,8 @@ class InkwellDarkStyle(Style):
         Name.Exception:        "#d4bf83",
         Name.Function:         "bold #aac18d",
         Name.Tag:              "#aac18d",
-        Name.Variable:         "#d8d5cc",
-        Literal:               "#d8d5cc",
+        Name.Variable:         "#d6d2c6",
+        Literal:               "#d6d2c6",
         String:                "#a9c18e",
         String.Escape:         "#d6a56f",
         Number:                "#c6a7cf",
@@ -70,8 +104,5 @@ def gen(style, filename, label=None):
 
 
 if __name__ == "__main__":
-    # 与应用的冷静蓝灰底色配合；避免 stata-light 的高饱和蓝绿红让代码区显脏。
-    light = pick(["xcode", "friendly", "default"])
-    dark = InkwellDarkStyle
-    gen(light, "pygments-light.css")
-    gen(dark, "pygments-dark.css", "inkwell-dark")
+    gen(InkwellLightStyle, "pygments-light.css", "inkwell-light")
+    gen(InkwellDarkStyle, "pygments-dark.css", "inkwell-dark")
