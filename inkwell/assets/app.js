@@ -1595,7 +1595,41 @@
       return "fence";
     }
     if (/^\$\$/.test(t)) return "math";
+    // ATX 标题
+    var hm = /^(#{1,6})\s+\S/.exec(t);
+    if (hm) return "heading:" + hm[1].length;
+    // GFM 表格：至少表头 + 分隔行，且多行含 |
+    var lines = t.split("\n").filter(function (l) { return l.replace(/^\s+|\s+$/g, "").length; });
+    if (lines.length >= 2) {
+      var pipeLines = 0;
+      for (var li = 0; li < lines.length; li++) {
+        if (lines[li].indexOf("|") >= 0) pipeLines++;
+      }
+      // GFM 分隔行：| --- | :---: | 或 ---|---
+      if (pipeLines >= 2 && /^\s*\|?[\t \-:|]+\|?[\t \-:|]*$/.test(lines[1])
+          && /[-:]/.test(lines[1])) {
+        return "table";
+      }
+    }
+    // 列表
+    if (/^([-*+]|\d+\.)\s+/.test(t)) return "list";
     return "text";
+  }
+
+  function applyBlockKindClass(blockEl, kind) {
+    if (!blockEl) return;
+    blockEl.classList.remove("is-fence", "is-math", "is-table", "is-heading", "is-list",
+      "h-1", "h-2", "h-3", "h-4", "h-5", "h-6");
+    if (!kind) return;
+    if (kind.indexOf("fence") === 0) blockEl.classList.add("is-fence");
+    else if (kind === "math") blockEl.classList.add("is-math");
+    else if (kind === "table") blockEl.classList.add("is-table");
+    else if (kind === "list") blockEl.classList.add("is-list");
+    else if (kind.indexOf("heading:") === 0) {
+      blockEl.classList.add("is-heading");
+      var lv = kind.split(":")[1];
+      if (lv) blockEl.classList.add("h-" + lv);
+    }
   }
 
   function splitMarkdownBlocks(text) {
@@ -1686,12 +1720,16 @@
   }
 
   function flushActiveBlock() {
-    if (activeBlockIdx < 0 || !lpBlocks[activeBlockIdx]) return;
     var ta = getActiveTextarea();
-    if (ta) {
-      lpBlocks[activeBlockIdx].text = ta.value;
-      syncBufferFromBlocks();
+    // 兜底：索引失效时仍从 DOM 读孤立 textarea
+    if (!ta && editorLive) {
+      ta = editorLive.querySelector("textarea.lp-source");
     }
+    if (!ta) return;
+    var idx = activeBlockIdx >= 0 ? activeBlockIdx : resolveBlockIdxFromEl(ta);
+    if (idx < 0 || !lpBlocks[idx]) return;
+    lpBlocks[idx].text = ta.value;
+    syncBufferFromBlocks();
   }
 
   function invalidateLiveRender() {
@@ -1716,10 +1754,247 @@
     if (opts.render !== false) runLiveRender({ force: true });
   }
 
+  function isStructuredKind(kind) {
+    if (!kind) return false;
+    return kind === "table" || kind === "math" || kind.indexOf("fence") === 0;
+  }
+
   function autosizeTextarea(ta) {
     if (!ta) return;
+    // 表格/围栏：高度锁定，内部滚动，避免整页被撑开
+    var block = ta.closest && ta.closest(".lp-block");
+    if (block && (block.classList.contains("is-table") || block.classList.contains("is-fence") || block.classList.contains("is-math"))) {
+      var lock = parseFloat(block.style.height || block.style.minHeight) || 0;
+      if (lock > 0) {
+        ta.style.height = "100%";
+        ta.style.maxHeight = "100%";
+        ta.style.overflow = "auto";
+        return;
+      }
+    }
+    var minH = parseFloat(ta.style.minHeight) || 0;
+    // 避免 height=0 触发滚动锚定跳动
     ta.style.height = "auto";
-    ta.style.height = Math.max(40, ta.scrollHeight + 4) + "px";
+    var next = Math.max(minH || 0, ta.scrollHeight);
+    if (!minH) next = Math.max(next, Math.ceil((parseFloat(getComputedStyle(ta).lineHeight) || 22)));
+    // 非结构化块也设上限，防止巨段拖垮布局
+    var cap = Math.floor(window.innerHeight * 0.7);
+    if (next > cap) {
+      ta.style.height = cap + "px";
+      ta.style.overflow = "auto";
+    } else {
+      ta.style.height = next + "px";
+      ta.style.overflow = "hidden";
+    }
+  }
+
+  function resolveBlockIdxFromEl(el) {
+    var b = el && el.closest && el.closest(".lp-block");
+    if (!b) return -1;
+    var n = parseInt(b.dataset.idx, 10);
+    return isNaN(n) ? -1 : n;
+  }
+
+  function teardownActiveTextarea(opts) {
+    // 拆掉孤立 textarea。opts.skipWrite：结构已 re-split 后禁止把旧全文写回新块
+    opts = opts || {};
+    if (!editorLive) return;
+    if (!opts.skipWrite) {
+      var tas = editorLive.querySelectorAll(".lp-block.is-active .lp-source, textarea.lp-source");
+      for (var i = 0; i < tas.length; i++) {
+        var ta = tas[i];
+        var idx = resolveBlockIdxFromEl(ta);
+        if (idx >= 0 && lpBlocks[idx]) {
+          lpBlocks[idx].text = ta.value;
+        }
+      }
+      if (tas.length) syncBufferFromBlocks();
+    }
+    var actives = editorLive.querySelectorAll(".lp-block.is-active");
+    for (var j = 0; j < actives.length; j++) {
+      var idx2 = parseInt(actives[j].dataset.idx, 10);
+      if (!isNaN(idx2) && lpBlocks[idx2]) {
+        fillBlockView(actives[j], idx2, { preferText: !!opts.skipWrite, preserveHeight: true });
+      } else {
+        // 索引失效：直接拆掉 DOM，不写缓冲
+        actives[j].classList.remove("is-active");
+        actives[j].innerHTML = "";
+      }
+    }
+    // 仍残留的 textarea 强制移除
+    var leftovers = editorLive.querySelectorAll("textarea.lp-source");
+    for (var k = 0; k < leftovers.length; k++) {
+      var host = leftovers[k].closest(".lp-block");
+      if (host) {
+        host.classList.remove("is-active");
+        var hi = parseInt(host.dataset.idx, 10);
+        if (!isNaN(hi) && lpBlocks[hi]) fillBlockView(host, hi, { preferText: true });
+        else host.innerHTML = "";
+      }
+    }
+  }
+
+  // —— 滚动锚点：全页重挂 / 激活块时避免跳到顶部 ——
+  var pendingEnterScroll = null; // 进入编辑时从阅读区继承的 scrollTop
+
+  function captureLiveScrollAnchor() {
+    if (!editorLiveWrap || !editorLive) return null;
+    var wrap = editorLiveWrap;
+    var wrapRect = wrap.getBoundingClientRect();
+    var blocks = editorLive.querySelectorAll(".lp-block");
+    for (var i = 0; i < blocks.length; i++) {
+      var r = blocks[i].getBoundingClientRect();
+      if (r.bottom > wrapRect.top + 6) {
+        return {
+          idx: parseInt(blocks[i].dataset.idx, 10),
+          offset: r.top - wrapRect.top,
+          scrollTop: wrap.scrollTop
+        };
+      }
+    }
+    return { idx: -1, offset: 0, scrollTop: wrap.scrollTop };
+  }
+
+  function restoreLiveScrollAnchor(anchor) {
+    if (!anchor || !editorLiveWrap) return;
+    if (anchor.idx >= 0 && !isNaN(anchor.idx)) {
+      var el = getBlockEl(anchor.idx);
+      if (el) {
+        var wrapRect = editorLiveWrap.getBoundingClientRect();
+        var r = el.getBoundingClientRect();
+        editorLiveWrap.scrollTop += (r.top - wrapRect.top) - anchor.offset;
+        return;
+      }
+    }
+    editorLiveWrap.scrollTop = anchor.scrollTop;
+  }
+
+  function withLiveScroll(fn) {
+    var anchor = captureLiveScrollAnchor();
+    fn();
+    restoreLiveScrollAnchor(anchor);
+    requestAnimationFrame(function () {
+      restoreLiveScrollAnchor(anchor);
+    });
+  }
+
+  function getBlockEl(idx) {
+    if (!editorLive || idx < 0) return null;
+    return editorLive.querySelector('.lp-block[data-idx="' + idx + '"]');
+  }
+
+  function focusNoScroll(el) {
+    if (!el) return;
+    var top = editorLiveWrap ? editorLiveWrap.scrollTop : 0;
+    try {
+      if (typeof el.focus === "function") el.focus({ preventScroll: true });
+    } catch (e) {
+      try { el.focus(); } catch (e2) {}
+      if (editorLiveWrap) editorLiveWrap.scrollTop = top;
+    }
+    if (editorLiveWrap) editorLiveWrap.scrollTop = top;
+  }
+
+  function fillBlockView(blockEl, idx, opts) {
+    opts = opts || {};
+    if (!blockEl) return;
+    var holdH = opts.holdHeight || 0;
+    if (!holdH && opts.preserveHeight) {
+      holdH = Math.ceil(blockEl.getBoundingClientRect().height) || 0;
+    }
+    var kind = classifyBlockKind(lpBlocks[idx] ? lpBlocks[idx].text : "");
+    applyBlockKindClass(blockEl, kind);
+    blockEl.classList.remove("is-active");
+    delete blockEl.dataset.lpKindSticky;
+    blockEl.style.height = "";
+    blockEl.style.maxHeight = "";
+    if (holdH > 0) blockEl.style.minHeight = holdH + "px";
+    else blockEl.style.minHeight = "";
+    blockEl.innerHTML = "";
+    var view = document.createElement("div");
+    view.className = "lp-view";
+    var part = (lastHtmlParts && lastHtmlParts[idx]) || "";
+    var raw = (lpBlocks[idx] && lpBlocks[idx].text) || "";
+    var trimmed = raw.replace(/^\s+|\s+$/g, "");
+    // 源码已改且缓存 HTML 可能过期：先显示纯文本，避免闪旧渲染
+    if (opts.preferText && trimmed) {
+      view.textContent = raw;
+    } else if (!part.replace(/^\s+|\s+$/g, "") && !trimmed) {
+      view.innerHTML = "<p class='lp-empty-hint'>点击此处开始写作…</p>";
+    } else if (!part.replace(/^\s+|\s+$/g, "") && trimmed) {
+      view.textContent = raw;
+    } else {
+      view.innerHTML = part;
+    }
+    blockEl.appendChild(view);
+    if (!opts.preferText) initPreviewContent(view);
+    if (holdH > 0 && !opts.keepHold) {
+      // 下一帧若内容已有自然高度则释放锁
+      requestAnimationFrame(function () {
+        if (!blockEl.classList.contains("is-active")) {
+          blockEl.style.minHeight = "";
+        }
+      });
+    }
+  }
+
+  function activateBlockInPlace(idx, opts) {
+    opts = opts || {};
+    var blockEl = getBlockEl(idx);
+    if (!blockEl || !lpBlocks[idx]) return false;
+    var view = blockEl.querySelector(".lp-view");
+    var minH = 0;
+    if (view) {
+      minH = Math.ceil(view.getBoundingClientRect().height);
+    } else if (blockEl.getBoundingClientRect) {
+      minH = Math.ceil(blockEl.getBoundingClientRect().height);
+    }
+    var anchor = captureLiveScrollAnchor();
+    var kind = classifyBlockKind(lpBlocks[idx].text);
+    // 先锁高度再清空，避免布局塌缩导致滚动跳动
+    if (minH > 0) {
+      blockEl.style.minHeight = minH + "px";
+      if (isStructuredKind(kind)) {
+        blockEl.style.height = minH + "px";
+        blockEl.style.maxHeight = "min(70vh, 28rem)";
+      }
+    }
+    blockEl.innerHTML = "";
+    blockEl.classList.add("is-active");
+    applyBlockKindClass(blockEl, kind);
+    blockEl.dataset.lpKindSticky = kind;
+
+    var ta = document.createElement("textarea");
+    ta.className = "lp-source";
+    ta.spellcheck = false;
+    ta.setAttribute("aria-label", "编辑块 " + (idx + 1));
+    ta.value = lpBlocks[idx].text || "";
+    if (minH > 0) ta.style.minHeight = minH + "px";
+    if (isStructuredKind(kind) && minH > 0) {
+      ta.style.height = "100%";
+      ta.style.overflow = "auto";
+    }
+    blockEl.appendChild(ta);
+    bindActiveTextarea(ta);
+    activeBlockIdx = idx;
+    autosizeTextarea(ta);
+    if (!isStructuredKind(kind) && minH > 0 && ta.offsetHeight < minH) {
+      ta.style.height = minH + "px";
+    }
+    if (opts.cursorEnd) {
+      var len = ta.value.length;
+      ta.selectionStart = ta.selectionEnd = len;
+    }
+    focusNoScroll(ta);
+    restoreLiveScrollAnchor(anchor);
+    requestAnimationFrame(function () {
+      restoreLiveScrollAnchor(anchor);
+      focusNoScroll(ta);
+      requestAnimationFrame(function () {
+        restoreLiveScrollAnchor(anchor);
+      });
+    });
+    return true;
   }
 
   function bindActiveTextarea(ta) {
@@ -1728,17 +2003,28 @@
     ta.addEventListener("compositionstart", function () { ta._lpComposing = true; });
     ta.addEventListener("compositionend", function () {
       ta._lpComposing = false;
-      if (activeBlockIdx >= 0 && lpBlocks[activeBlockIdx]) {
-        lpBlocks[activeBlockIdx].text = ta.value;
+      var idx = resolveBlockIdxFromEl(ta);
+      if (idx >= 0 && lpBlocks[idx]) {
+        lpBlocks[idx].text = ta.value;
         syncBufferFromBlocks();
       }
       autosizeTextarea(ta);
+      if (ta._lpPendingActivate != null) {
+        var next = ta._lpPendingActivate;
+        ta._lpPendingActivate = null;
+        activateBlock(next);
+      }
     });
     ta.addEventListener("input", function () {
-      if (activeBlockIdx < 0 || !lpBlocks[activeBlockIdx]) return;
-      if (ta._lpComposing || (ta.isComposing)) return;
-      lpBlocks[activeBlockIdx].text = ta.value;
+      if (ta._lpComposing || ta.isComposing) return;
+      var idx = resolveBlockIdxFromEl(ta);
+      if (idx < 0 || !lpBlocks[idx]) return;
+      lpBlocks[idx].text = ta.value;
       syncBufferFromBlocks();
+      // sticky kind：编辑过程中不降级（避免表格 thrash）
+      var bel = getBlockEl(idx);
+      var sticky = bel && bel.dataset.lpKindSticky;
+      if (sticky) applyBlockKindClass(bel, sticky);
       autosizeTextarea(ta);
     });
     ta.addEventListener("keydown", function (e) {
@@ -1751,7 +2037,6 @@
       if (ctrl && e.shiftKey && (e.key === "p" || e.key === "P")) {
         e.preventDefault();
         flushActiveBlock();
-        // 刷新时先提交当前块再整体重渲，不 keep 可能已多段的激活文本
         deactivateBlock();
         return;
       }
@@ -1768,7 +2053,8 @@
           ta.value = ta.value.slice(0, s) + "  " + ta.value.slice(en);
           ta.selectionStart = ta.selectionEnd = s + 2;
         }
-        if (activeBlockIdx >= 0) lpBlocks[activeBlockIdx].text = ta.value;
+        var tidx = resolveBlockIdxFromEl(ta);
+        if (tidx >= 0) lpBlocks[tidx].text = ta.value;
         syncBufferFromBlocks();
         autosizeTextarea(ta);
         return;
@@ -1786,8 +2072,7 @@
         if (ta._lpComposing || ta.isComposing) return;
         var ae = document.activeElement;
         if (ae && ae.classList && ae.classList.contains("lp-source")) return;
-        // 焦点仍在编辑工具栏：只 flush，不强制重渲
-        if (ae && editorPane && editorPane.contains(ae) && ae !== editorLive && !editorLive.contains(ae)) {
+        if (ae && editorPane && editorPane.contains(ae) && ae !== editorLive && !(editorLive && editorLive.contains(ae))) {
           flushActiveBlock();
           return;
         }
@@ -1800,7 +2085,11 @@
   function mountLiveDom(htmlParts, opts) {
     opts = opts || {};
     if (!editorLive) return;
-    var wrapScroll = editorLiveWrap ? editorLiveWrap.scrollTop : 0;
+    var anchor = captureLiveScrollAnchor();
+    // 进入编辑首次渲染：用阅读区滚动位置
+    if (pendingEnterScroll != null && (!anchor || anchor.scrollTop === 0)) {
+      anchor = { idx: -1, offset: 0, scrollTop: pendingEnterScroll };
+    }
     var keepActive = !!opts.keepActive && activeBlockIdx >= 0 && activeBlockIdx < lpBlocks.length;
     var restoreIdx = keepActive ? activeBlockIdx : -1;
     var restoreVal = null;
@@ -1818,14 +2107,16 @@
 
     lastHtmlParts = htmlParts || lastHtmlParts;
     editorLive.innerHTML = "";
+    if (pendingEnterScroll != null && editorLiveWrap) {
+      editorLiveWrap.classList.add("lp-scroll-pending");
+    }
 
     for (var i = 0; i < lpBlocks.length; i++) {
       var blockEl = document.createElement("div");
       blockEl.className = "lp-block";
       blockEl.dataset.idx = String(i);
       var kind = classifyBlockKind(lpBlocks[i].text);
-      if (kind.indexOf("fence") === 0) blockEl.classList.add("is-fence");
-      if (kind === "math") blockEl.classList.add("is-math");
+      applyBlockKindClass(blockEl, kind);
 
       if (i === restoreIdx) {
         blockEl.classList.add("is-active");
@@ -1844,7 +2135,6 @@
         if (!part.replace(/^\s+|\s+$/g, "") && !trimmed) {
           view.innerHTML = "<p class='lp-empty-hint'>点击此处开始写作…</p>";
         } else if (!part.replace(/^\s+|\s+$/g, "") && trimmed) {
-          // 预览切片失败时降级显示纯文本，避免空白块
           view.textContent = lpBlocks[i].text;
         } else {
           view.innerHTML = part;
@@ -1863,65 +2153,171 @@
       var focusTa = getActiveTextarea();
       if (focusTa) {
         autosizeTextarea(focusTa);
-        try {
-          focusTa.focus();
-          if (selStart != null) {
+        if (selStart != null) {
+          try {
             focusTa.selectionStart = selStart;
             focusTa.selectionEnd = selEnd;
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }
+        focusNoScroll(focusTa);
       }
     }
-    if (editorLiveWrap) editorLiveWrap.scrollTop = wrapScroll;
+    restoreLiveScrollAnchor(anchor);
+    if (pendingEnterScroll != null) {
+      if (editorLiveWrap) editorLiveWrap.scrollTop = pendingEnterScroll;
+      // 延迟清除，等图片/mermaid 撑开后再补一次
+      var enterTarget = pendingEnterScroll;
+      pendingEnterScroll = null;
+      var applyEnter = function () {
+        if (editorLiveWrap && enterTarget != null) editorLiveWrap.scrollTop = enterTarget;
+      };
+      applyEnter();
+      requestAnimationFrame(function () {
+        applyEnter();
+        if (editorLiveWrap) editorLiveWrap.classList.remove("lp-scroll-pending");
+        requestAnimationFrame(applyEnter);
+        setTimeout(function () {
+          applyEnter();
+          if (editorLiveWrap) editorLiveWrap.classList.remove("lp-scroll-pending");
+        }, 120);
+        setTimeout(applyEnter, 400);
+      });
+    } else if (editorLiveWrap) {
+      editorLiveWrap.classList.remove("lp-scroll-pending");
+    }
+    requestAnimationFrame(function () {
+      if (anchor) restoreLiveScrollAnchor(anchor);
+    });
   }
+
+  var lpSingleRefreshSeq = 0;
 
   function activateBlock(idx, opts) {
     opts = opts || {};
     if (!editMode || idx < 0 || idx >= lpBlocks.length) return;
     if (idx === activeBlockIdx && getActiveTextarea()) {
-      var ta0 = getActiveTextarea();
-      if (ta0) try { ta0.focus(); } catch (e) {}
+      focusNoScroll(getActiveTextarea());
+      return;
+    }
+    // IME 组合中：延后切换，避免吞字
+    var curTa = getActiveTextarea();
+    if (curTa && (curTa._lpComposing || curTa.isComposing)) {
+      curTa._lpPendingActivate = idx;
       return;
     }
     invalidateLiveRender();
     lpActivating = true;
     var prev = activeBlockIdx;
     flushActiveBlock();
-    // 离开上一块后若结构已变（用户在块内敲了空行），重切分并尽量保留目标索引
+
+    // 切换块：尽量就地改 DOM，不全页重挂（减少跳动）
     if (prev >= 0 && prev !== idx) {
       var full = editorSource ? editorSource.value : joinMarkdownBlocks(lpBlocks);
+      var oldCount = lpBlocks.length;
       lpBlocks = splitMarkdownBlocks(full);
+      // 结构未变：只刷新上一块 HTML，再就地激活目标块
+      if (lpBlocks.length === oldCount) {
+        var prevStill = Math.min(prev, lpBlocks.length - 1);
+        if (idx >= lpBlocks.length) idx = lpBlocks.length - 1;
+        // 先同步拆掉上一块 textarea（防止孤立）
+        var prevEl = getBlockEl(prevStill);
+        activeBlockIdx = -1;
+        if (prevEl) {
+          fillBlockView(prevEl, prevStill, { preferText: true, preserveHeight: true, keepHold: true });
+        }
+        refreshSingleBlockView(prevStill);
+        activateBlockInPlace(idx, opts);
+        lpActivating = false;
+        setEditStatus("编辑块 " + (idx + 1) + " / " + lpBlocks.length, "");
+        return;
+      }
+      // 结构变化：缓冲已 flush+resplit，拆 DOM 时禁止把旧全文写回新块
+      teardownActiveTextarea({ skipWrite: true });
       if (idx >= lpBlocks.length) idx = lpBlocks.length - 1;
-      // 上一块 HTML 已过期：整页刷新后再激活（无 keepText 覆写）
       activeBlockIdx = -1;
       lpActivating = false;
       runLiveRender({ afterActivate: idx });
       return;
     }
-    activeBlockIdx = idx;
-    mountLiveDom(lastHtmlParts, { keepActive: true });
-    lpActivating = false;
-    if (opts.cursorEnd) {
-      var ta = getActiveTextarea();
-      if (ta) {
-        var len = ta.value.length;
-        ta.selectionStart = ta.selectionEnd = len;
-      }
+
+    // 首次激活：就地替换当前块
+    if (!activateBlockInPlace(idx, opts)) {
+      activeBlockIdx = -1;
+      runLiveRender({ afterActivate: idx });
     }
+    lpActivating = false;
     setEditStatus("编辑块 " + (idx + 1) + " / " + lpBlocks.length, "");
+  }
+
+  function refreshSingleBlockView(idx) {
+    if (idx < 0 || idx >= lpBlocks.length) return;
+    var a = api();
+    if (!a || !a.preview_markdown) return;
+    var text = (lpBlocks[idx] && lpBlocks[idx].text) || "";
+    var token = ++lpSingleRefreshSeq;
+    var expected = text;
+    a.preview_markdown(text || "\n", editPath || currentPath).then(function (p) {
+      if (!editMode || token !== lpSingleRefreshSeq) return;
+      if (!p || p.ok === false) {
+        var el0 = getBlockEl(idx);
+        if (el0 && activeBlockIdx !== idx) {
+          fillBlockView(el0, idx, { preferText: true });
+        }
+        return;
+      }
+      // 源码在请求期间又改了则丢弃
+      if ((lpBlocks[idx] && lpBlocks[idx].text) !== expected) return;
+      if (!lastHtmlParts) lastHtmlParts = [];
+      lastHtmlParts[idx] = p.content || "";
+      if (activeBlockIdx === idx) return;
+      var el = getBlockEl(idx);
+      if (el) {
+        var hold = Math.ceil(el.getBoundingClientRect().height) || 0;
+        fillBlockView(el, idx, { holdHeight: hold });
+      }
+    }).catch(function () {
+      if (!editMode || token !== lpSingleRefreshSeq) return;
+      var el1 = getBlockEl(idx);
+      if (el1 && activeBlockIdx !== idx) fillBlockView(el1, idx, { preferText: true });
+    });
   }
 
   function deactivateBlock() {
     if (activeBlockIdx < 0) {
+      teardownActiveTextarea();
       return;
     }
     var ta = getActiveTextarea();
     if (ta && (ta._lpComposing || ta.isComposing)) return;
     invalidateLiveRender();
+    var idx = activeBlockIdx;
     flushActiveBlock();
-    var text = editorSource ? editorSource.value : joinMarkdownBlocks(lpBlocks);
-    lpBlocks = splitMarkdownBlocks(text);
+    var full = editorSource ? editorSource.value : joinMarkdownBlocks(lpBlocks);
+    var oldCount = lpBlocks.length;
+    lpBlocks = splitMarkdownBlocks(full);
+    var el = getBlockEl(idx);
+    var holdH = el ? Math.ceil(el.getBoundingClientRect().height) : 0;
     activeBlockIdx = -1;
+
+    // 块数不变：就地恢复该块最终渲染，避免整页跳动
+    if (lpBlocks.length === oldCount && getBlockEl(idx)) {
+      var anchor = captureLiveScrollAnchor();
+      el = getBlockEl(idx);
+      // 保持高度直到新预览回来，避免二次跳动
+      if (el) fillBlockView(el, idx, { preferText: true, holdHeight: holdH, keepHold: true });
+      restoreLiveScrollAnchor(anchor);
+      refreshSingleBlockView(idx);
+      var a = api();
+      if (a && a.preview_markdown) {
+        a.preview_markdown(editorSource.value, editPath || currentPath).then(function (p2) {
+          if (!editMode) return;
+          if (toc && p2 && p2.toc != null) toc.innerHTML = p2.toc || "";
+        }).catch(function () {});
+      }
+      return;
+    }
+    // 已 re-split：只拆 DOM，不要把旧 ta 全文写回
+    teardownActiveTextarea({ skipWrite: true });
     runLiveRender({});
   }
 
@@ -1967,14 +2363,11 @@
     if (!a || !a.preview_markdown) return;
     flushActiveBlock();
 
-    // 关键规则：渲染前用 buffer 重切分；不把「激活块旧全文」写回切分后的索引
-    // （否则在块内敲出多段后 keepActive 会重复内容）。
     var wantActive = (opts.afterActivate != null)
       ? opts.afterActivate
       : (opts.keepActive ? activeBlockIdx : -1);
     if (wantActive != null && wantActive < 0) wantActive = -1;
 
-    // 若当前有激活块，先提交再切分，激活态改为「渲染完成后按 wantActive 恢复」
     var savedSel = null;
     if (wantActive >= 0) {
       var ta = getActiveTextarea();
@@ -1982,9 +2375,14 @@
         savedSel = { start: ta.selectionStart, end: ta.selectionEnd, text: ta.value };
       }
     }
+    // 全页重渲前记住锚点（含首次 pendingEnterScroll）
+    var preAnchor = captureLiveScrollAnchor();
+    if (pendingEnterScroll != null) {
+      preAnchor = { idx: -1, offset: 0, scrollTop: pendingEnterScroll };
+    }
+
     lpBlocks = splitMarkdownBlocks(editorSource.value);
     if (wantActive >= lpBlocks.length) wantActive = -1;
-    // 渲染过程中暂时不挂激活 textarea，避免 keepText 覆写；完成后恢复
     activeBlockIdx = -1;
 
     var marked = bufferWithMarkers(lpBlocks);
@@ -1994,34 +2392,43 @@
       if (!editMode || seq !== editPreviewSeq) return;
       if (p && p.ok === false && !p.content) {
         setEditStatus(p.error || "渲染失败", "warn");
-        // 恢复激活以便继续编辑
         if (afterIdx >= 0 && afterIdx < lpBlocks.length) {
-          activeBlockIdx = afterIdx;
-          mountLiveDom(lastHtmlParts, { keepActive: true });
+          // 不整页 wipe：尝试就地激活
+          activeBlockIdx = -1;
+          if (getBlockEl(afterIdx)) activateBlockInPlace(afterIdx, {});
+          else {
+            activeBlockIdx = afterIdx;
+            mountLiveDom(lastHtmlParts, { keepActive: true });
+          }
         }
         return;
       }
       if (p && p.content) {
         p._lpParts = splitPreviewHtml(p.content, lpBlocks.length);
       }
-      // 仅当用户未在等待期间切换激活时才恢复 afterIdx
       if (afterIdx >= 0 && afterIdx < lpBlocks.length && activeBlockIdx < 0) {
-        activeBlockIdx = afterIdx;
-        applyLivePayload(p, { keepActive: true, skipToc: true });
+        activeBlockIdx = -1;
+        applyLivePayload(p, { keepActive: false, skipToc: true });
+        // 先恢复滚动，再就地激活（activate 自带锚点，勿再用旧 preAnchor 覆盖）
+        if (preAnchor) restoreLiveScrollAnchor(preAnchor);
+        activateBlockInPlace(afterIdx, {});
         if (savedSel && getActiveTextarea()) {
           var t2 = getActiveTextarea();
-          // 若用户文本未因切分变化，恢复光标
           if (t2 && t2.value === savedSel.text) {
             try {
               t2.selectionStart = savedSel.start;
               t2.selectionEnd = savedSel.end;
             } catch (e) {}
           }
+          focusNoScroll(t2);
         }
       } else {
-        applyLivePayload(p, { keepActive: activeBlockIdx >= 0, skipToc: true });
+        applyLivePayload(p, { keepActive: false, skipToc: true });
+        if (preAnchor) restoreLiveScrollAnchor(preAnchor);
+        requestAnimationFrame(function () {
+          if (preAnchor) restoreLiveScrollAnchor(preAnchor);
+        });
       }
-      // 干净 TOC：与 marker 预览并行请求
       a.preview_markdown(editorSource.value, editPath || currentPath).then(function (p2) {
         if (!editMode || seq !== editPreviewSeq) return;
         if (toc && p2 && p2.toc != null) toc.innerHTML = p2.toc || "";
@@ -2065,7 +2472,7 @@
             t.selectionEnd = a + opts.selectInner.length;
           }
         }
-        try { t.focus(); } catch (e) {}
+        focusNoScroll(t);
       };
       setTimeout(pick, 30);
       return;
@@ -2222,11 +2629,12 @@
       activeBlockIdx = -1;
       lastHtmlParts = [];
       setDirty(false);
-      // 阅读区可能已滚动：编辑态 main 溢出隐藏，必须归零否则工具栏被裁切
+      // 阅读区可能已滚动：编辑态 main 溢出隐藏需归零，但把滚动位置交给 live 容器
       if (main) {
         main._editRestoreScroll = savedMainScroll;
         main.scrollTop = 0;
       }
+      pendingEnterScroll = savedMainScroll || 0;
       document.body.classList.add("edit-mode");
       if (editorPane) editorPane.hidden = false;
       updateDirtyUI();
@@ -2315,6 +2723,7 @@
     editSaving = true;
     var saveGen = ++editSaveGen;
     setEditStatus("保存中…");
+    // 磁盘快照：finishSave 的 baseline 必须与此一致
     var text = editorSource.value;
     var path = editPath || currentPath;
     function unlock() { editSaving = false; }
@@ -2331,7 +2740,7 @@
         return a.save_document(text, path, null).then(function (p2) {
           if (saveGen !== editSaveGen) { unlock(); return null; }
           unlock();
-          return finishSave(p2, opts, saveGen);
+          return finishSave(p2, opts, saveGen, text);
         }).catch(function () {
           unlock();
           setEditStatus("保存失败", "warn");
@@ -2340,7 +2749,7 @@
         });
       }
       unlock();
-      return finishSave(p, opts, saveGen);
+      return finishSave(p, opts, saveGen, text);
     }).catch(function () {
       unlock();
       setEditStatus("保存失败", "warn");
@@ -2349,7 +2758,7 @@
     });
   }
 
-  function finishSave(p, opts, saveGen) {
+  function finishSave(p, opts, saveGen, savedText) {
     if (saveGen != null && saveGen !== editSaveGen) return p;
     if (!p || p.ok === false) {
       setEditStatus((p && p.error) || "保存失败", "warn");
@@ -2360,32 +2769,36 @@
       toast("已保存到磁盘");
       return p;
     }
-    flushActiveBlock();
-    editBaseline = editorSource ? editorSource.value : editBaseline;
+    // baseline = 已落盘内容；保存飞行中的新键入应标 dirty
+    editBaseline = savedText != null ? savedText : (editorSource ? editorSource.value : editBaseline);
     editMtimeNs = p.mtime_ns != null ? String(p.mtime_ns) : editMtimeNs;
-    setDirty(false);
     if (p.path) {
       editPath = p.path;
       currentPath = p.path;
       setDocTitle(p.title || PathBase(p.path));
     }
-    // 阅读区同步干净 HTML；live 面重新渲染（先提交激活块，避免 keepText 污染）
     if (content && p.content != null) {
       content.innerHTML = p.content || "";
       if (toc && p.toc != null) toc.innerHTML = p.toc || "";
       initContent();
     }
-    // 保存后退出激活态并重渲最终效果，防止 dirty 被错误重新点亮
+    // 拆掉激活态；若用户在保存期间又改了，flush 后与 baseline 比较
+    flushActiveBlock();
+    teardownActiveTextarea();
     activeBlockIdx = -1;
+    markDirtyFromBuffer();
     runLiveRender({});
     if (p.path && api() && api().activate_path) api().activate_path(p.path);
     if (p.encoding_changed) {
       setEditStatus("已保存（编码已改为 " + p.encoding_changed + "）", "ok");
     } else {
-      setEditStatus("已保存", "ok");
+      setEditStatus(editDirty ? "已保存（之后还有未保存修改）" : "已保存", "ok");
     }
-    toast("已保存");
-    if (opts && opts.exit) exitEditMode({ force: true, skipReload: true });
+    toast(editDirty ? "已保存（有后续修改未写入）" : "已保存");
+    if (opts && opts.exit) {
+      if (editDirty && !window.confirm("保存后又有修改，仍要退出并丢弃？")) return p;
+      exitEditMode({ force: true, skipReload: true });
+    }
     return p;
   }
 
@@ -2453,6 +2866,7 @@
     if ($("editSaveBtn")) $("editSaveBtn").addEventListener("click", function () { saveEdit(); });
     if ($("editRefreshBtn")) $("editRefreshBtn").addEventListener("click", function () {
       flushActiveBlock();
+      teardownActiveTextarea();
       activeBlockIdx = -1;
       runLiveRender({ fromButton: true });
     });
@@ -2464,8 +2878,17 @@
     if ($("editInsertMathBtn")) $("editInsertMathBtn").addEventListener("click", insertMathBlock);
     if ($("editExitBtn")) $("editExitBtn").addEventListener("click", function () { exitEditMode(); });
     if (editorLive) {
+      // pointerdown 抢在 blur 前标记激活，避免 blur→deactivate 与 click 竞态
+      editorLive.addEventListener("pointerdown", function (e) {
+        if (!editMode) return;
+        if (e.target.closest && e.target.closest("button, a, textarea, input, img, .image-block, .mermaid-diagram, .mermaid-block")) return;
+        var block = e.target.closest && e.target.closest(".lp-block");
+        if (block && editorLive.contains(block)) {
+          lpActivating = true;
+          setTimeout(function () { lpActivating = false; }, 50);
+        }
+      }, true);
       editorLive.addEventListener("click", onLiveClick);
-      // 委托：图片选中 / 复制 / mermaid / 链接
       editorLive.addEventListener("click", onContentActionClick);
       editorLive.addEventListener("click", onContentImageClick);
       editorLive.addEventListener("click", onContentDiagramClick);
@@ -2748,6 +3171,7 @@
       if (editMode && ctrl && e.shiftKey && (e.key === "p" || e.key === "P")) {
         e.preventDefault();
         flushActiveBlock();
+        teardownActiveTextarea();
         activeBlockIdx = -1;
         runLiveRender({ fromButton: true });
         return;

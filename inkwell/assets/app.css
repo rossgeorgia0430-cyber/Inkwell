@@ -842,6 +842,11 @@ body.edit-mode .tb-title.dirty::before {
   overflow: auto;
   background: var(--bg);
   scroll-behavior: auto;
+  overflow-anchor: none; /* 避免 WebView 滚动锚定把视口拽到顶部 */
+}
+/* 首次渲染完成前隐藏，防止先闪顶部再跳回 */
+.editor-live-wrap.lp-scroll-pending {
+  visibility: hidden;
 }
 .editor-live {
   width: 100%;
@@ -872,38 +877,48 @@ body.edit-mode .tb-title.dirty::before {
   border: 0 !important;
 }
 
-/* 块级：未激活 = 最终渲染；激活 = 源码编辑 */
+/* 块级：未激活 = 最终渲染；激活 = 无框就地源码（Obsidian Live Preview 感） */
 .lp-block {
   position: relative;
   margin: 0;
-  padding: 2px 8px;
-  margin-left: -8px;
-  margin-right: -8px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  transition: background .12s ease, border-color .12s ease, box-shadow .12s ease;
+  padding: 0;
+  border-radius: 0;
+  border: none;
   cursor: text;
+  /* 与阅读态块间距一致，避免激活时垂直跳动 */
 }
-/* 左侧高亮条：避免整块底色污染代码/表格/图示 */
-.lp-block:hover {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 50%, transparent);
-}
-.lp-block:not(.is-fence):not(.is-math):hover {
-  background: color-mix(in srgb, var(--accent-soft) 22%, transparent);
+.lp-block + .lp-block { margin-top: 0; }
+
+/* 悬停：极轻左侧指示，无白底框 */
+.lp-block:hover:not(.is-active)::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 0.15em;
+  bottom: 0.15em;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  pointer-events: none;
 }
 .lp-block.is-active {
-  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-  box-shadow: inset 3px 0 0 var(--accent);
-  cursor: default;
-}
-.lp-block.is-fence.is-active,
-.lp-block.is-math.is-active {
+  cursor: text;
   background: transparent;
+  box-shadow: none;
+  border: none;
 }
-.lp-block + .lp-block { margin-top: 2px; }
+/* 激活时 caret 暗示：左侧细条 */
+.lp-block.is-active::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 0.1em;
+  bottom: 0.1em;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
 
 .lp-view {
   min-height: 1.5em;
@@ -920,38 +935,109 @@ body.edit-mode .tb-title.dirty::before {
   pointer-events: none;
 }
 
+/*
+ * 无缝源码层：叠在最终效果视觉上——无白底、无边框、继承正文排版。
+ * 激活时尽量保持与渲染块相同的字号/行高，减少「格式跳动」。
+ */
 .lp-source {
   display: block;
+  box-sizing: border-box;
   width: 100%;
-  min-height: 2.4em;
+  min-height: 1.5em;
   margin: 0;
-  padding: 8px 10px;
-  border: none;
-  outline: none;
-  resize: vertical;
-  background: color-mix(in srgb, var(--elevated) 88%, transparent);
+  padding: 0;
+  border: none !important;
+  outline: none !important;
+  resize: none;
+  background: transparent !important;
   color: var(--text);
-  font-family: var(--font-mono);
-  font-size: calc(var(--reader-font) * 0.92);
-  line-height: 1.55;
+  /* 正文：与 .article 一致，而不是代码框 */
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
   tab-size: 2;
   white-space: pre-wrap;
   word-break: break-word;
-  border-radius: 6px;
+  border-radius: 0;
   caret-color: var(--accent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, var(--border));
+  box-shadow: none !important;
+  overflow: hidden;
+  field-sizing: content; /* 支持时自动增高 */
 }
 .lp-source:focus {
-  background: var(--elevated);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 
-/* 围栏块激活时给足高度 */
+/* 标题块：贴近 h1–h3 视觉（含底边，减少跳动） */
+.lp-block.is-heading .lp-source {
+  color: var(--text-strong);
+  font-weight: 680;
+  line-height: 1.3;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.lp-block.is-heading.h-1 .lp-source {
+  font-size: 2em;
+  padding-bottom: .3em;
+  border-bottom: 1px solid var(--border) !important;
+}
+.lp-block.is-heading.h-2 .lp-source {
+  font-size: 1.55em;
+  padding-bottom: .25em;
+  border-bottom: 1px solid var(--border) !important;
+}
+.lp-block.is-heading.h-3 .lp-source { font-size: 1.28em; }
+.lp-block.is-heading.h-4 .lp-source { font-size: 1.1em; }
+.lp-block.is-heading.h-5 .lp-source { font-size: 1em; color: var(--text-soft); }
+.lp-block.is-heading.h-6 .lp-source { font-size: .92em; color: var(--muted); }
+
+/* 表格：锁定高度区内滚动，减少整页被撑开/缩回 */
+.lp-block.is-table {
+  /* JS 会写 height/minHeight；此处兜底 */
+}
+.lp-block.is-table .lp-source {
+  font-family: var(--font-mono);
+  font-size: calc(var(--reader-font) * 0.9);
+  line-height: 2.2; /* 贴近 td 行高（padding+文字） */
+  tab-size: 4;
+  overflow: auto !important;
+  white-space: pre;
+  max-height: min(70vh, 28rem);
+  -webkit-appearance: none;
+  appearance: none;
+}
+.lp-block.is-table.is-active {
+  max-height: min(70vh, 28rem);
+  overflow: hidden;
+}
+
+/* 围栏 / 公式：等宽，无白框；字号跟随阅读字号 */
 .lp-block.is-fence .lp-source,
 .lp-block.is-math .lp-source {
-  min-height: 7em;
-  font-size: 13px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: calc(var(--reader-font) * 0.86);
+  line-height: 1.6;
+  color: var(--text);
+  background: transparent !important;
+  padding: 14px 16px; /* 贴近 codehilite 内边距，减少水平跳动 */
+  max-height: min(70vh, 28rem);
+  overflow: auto !important;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* 列表：模拟 ul/ol 缩进 */
+.lp-block.is-list .lp-source {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  padding-left: 1.5em;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .editor-preview-error {
@@ -962,4 +1048,8 @@ body.edit-mode .tb-title.dirty::before {
 @media (max-width: 900px) {
   .editor-status { max-width: 40vw; }
   .edit-tool-btn { padding: 0 8px; }
+  .lp-block:hover:not(.is-active)::before,
+  .lp-block.is-active::before {
+    left: -6px;
+  }
 }
