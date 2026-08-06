@@ -726,20 +726,29 @@ mark.search-hit.current { background: var(--mark-current); color: #1c1300; }
 .image-zoom-hint { font-size: 11px; color: #8f8b81; padding: 0 6px 0 2px; user-select: none; }
 
 /* ============================================================
-   编辑模式：标题栏铅笔按钮 + 源码 / 预览分栏
+   编辑模式：Obsidian 风格 — 在最终渲染效果中块级编辑（无分栏）
    ============================================================ */
 #editBtn.active {
   background: var(--accent-soft);
   color: var(--accent);
 }
 
-/* 阅读态隐藏编辑器；编辑态隐藏正文 article */
+/* 阅读态隐藏编辑器；编辑态隐藏正文 article，只显示 live 编辑面 */
 body.edit-mode .article#content { display: none; }
 body.edit-mode .editor-pane { display: flex; }
 body.edit-mode .editor-pane[hidden] { display: none !important; }
 body:not(.edit-mode) .editor-pane { display: none !important; }
-body.edit-mode .main { overflow: hidden; }
-body.edit-mode .sidebar { opacity: .55; pointer-events: none; }
+body.edit-mode .main {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+body.edit-mode .article-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 body.edit-mode .tb-title.dirty::before {
   content: "● ";
   color: var(--accent);
@@ -747,12 +756,14 @@ body.edit-mode .tb-title.dirty::before {
 }
 
 .editor-pane {
+  position: relative;
   display: none;
   flex-direction: column;
+  flex: 1 1 auto;
   width: 100%;
   max-width: none;
   min-height: 0;
-  height: calc(100vh - var(--tb-h));
+  height: auto;
   margin: 0;
   padding: 0;
   background: var(--bg);
@@ -768,6 +779,7 @@ body.edit-mode .tb-title.dirty::before {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   user-select: none;
+  z-index: 2;
 }
 .editor-toolbar-left,
 .editor-toolbar-right {
@@ -823,80 +835,131 @@ body.edit-mode .tb-title.dirty::before {
   color: var(--accent-hover);
 }
 
-.editor-split {
+/* 单栏 live 编辑面：与阅读态相同的正文宽度与排版 */
+.editor-live-wrap {
   flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
+  background: var(--bg);
+  scroll-behavior: auto;
 }
-.editor-source-wrap,
-.editor-preview-wrap {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-.editor-source-wrap {
-  border-right: 1px solid var(--border);
-  background: var(--elevated);
-}
-.editor-pane-label {
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--faint);
-  padding: 8px 14px 4px;
-}
-.editor-source {
-  flex: 1 1 auto;
+.editor-live {
   width: 100%;
-  min-height: 0;
-  margin: 0;
-  padding: 10px 14px 24px;
-  border: none;
-  outline: none;
-  resize: none;
-  background: transparent;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 13.5px;
-  line-height: 1.55;
-  tab-size: 2;
-  white-space: pre;
-  overflow: auto;
-  caret-color: var(--accent);
-}
-.editor-source:focus {
-  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
-}
-.editor-preview {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  padding: clamp(16px, 2.2vw, 32px) clamp(14px, 2.2vw, 36px) 80px;
+  max-width: clamp(46rem, 76vw, 84rem);
+  margin: 0 auto;
+  padding: clamp(20px, 3vw, 48px) clamp(18px, 3vw, 46px) 140px;
   font-size: var(--reader-font);
   line-height: 1.7;
   color: var(--text);
   word-wrap: break-word;
-  background: var(--bg);
+  outline: none;
 }
-/* 预览区复用 .article 排版；收紧首元素间距 */
-.editor-preview > :first-child { margin-top: 0; }
+.editor-live > .lp-block:first-child { margin-top: 0; }
 
-/* 窄窗：上下分栏，源码在上预览在下 */
+/* 屏幕阅读器 / 测试钩子：完整源码缓冲，不占布局 */
+.editor-source-sr {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* 块级：未激活 = 最终渲染；激活 = 源码编辑 */
+.lp-block {
+  position: relative;
+  margin: 0;
+  padding: 2px 8px;
+  margin-left: -8px;
+  margin-right: -8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: background .12s ease, border-color .12s ease, box-shadow .12s ease;
+  cursor: text;
+}
+/* 左侧高亮条：避免整块底色污染代码/表格/图示 */
+.lp-block:hover {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.lp-block:not(.is-fence):not(.is-math):hover {
+  background: color-mix(in srgb, var(--accent-soft) 22%, transparent);
+}
+.lp-block.is-active {
+  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  box-shadow: inset 3px 0 0 var(--accent);
+  cursor: default;
+}
+.lp-block.is-fence.is-active,
+.lp-block.is-math.is-active {
+  background: transparent;
+}
+.lp-block + .lp-block { margin-top: 2px; }
+
+.lp-view {
+  min-height: 1.5em;
+}
+.lp-view > :first-child { margin-top: 0; }
+.lp-view > :last-child { margin-bottom: 0; }
+
+/* 空块 / 空文档提示 */
+.lp-empty-hint {
+  margin: 0 !important;
+  color: var(--faint);
+  font-style: italic;
+  user-select: none;
+  pointer-events: none;
+}
+
+.lp-source {
+  display: block;
+  width: 100%;
+  min-height: 2.4em;
+  margin: 0;
+  padding: 8px 10px;
+  border: none;
+  outline: none;
+  resize: vertical;
+  background: color-mix(in srgb, var(--elevated) 88%, transparent);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(var(--reader-font) * 0.92);
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 6px;
+  caret-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+.lp-source:focus {
+  background: var(--elevated);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+/* 围栏块激活时给足高度 */
+.lp-block.is-fence .lp-source,
+.lp-block.is-math .lp-source {
+  min-height: 7em;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.editor-preview-error {
+  color: #c4473a;
+  padding: 12px;
+}
+
 @media (max-width: 900px) {
-  .editor-split {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  }
-  .editor-source-wrap {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
   .editor-status { max-width: 40vw; }
   .edit-tool-btn { padding: 0 8px; }
 }

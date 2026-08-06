@@ -482,6 +482,14 @@ class _HTMLSanitizer(HTMLParser):
         if not self._drop_depth:
             self.out.append(f"&#{name};")
 
+    def handle_comment(self, data):
+        """仅放行 Live Preview 块分隔注释；其它 HTML 注释一律丢弃。"""
+        if self._drop_depth:
+            return
+        # 与前端 bufferWithMarkers / splitPreviewHtml 约定一致
+        if re.fullmatch(r"inkwell-lp-block:\d+", (data or "").strip()):
+            self.out.append(f"<!--{data.strip()}-->")
+
 
 def sanitize_html(html_text):
     """清理 Markdown 产生或携带的 HTML。解析失败时安全降级为纯文本。"""

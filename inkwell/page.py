@@ -64,7 +64,7 @@ _SHELL = """
           <div class="editor-toolbar" id="editorToolbar">
             <div class="editor-toolbar-left">
               <button type="button" class="edit-tool-btn" id="editSaveBtn" title="保存 (Ctrl+S)">保存</button>
-              <button type="button" class="edit-tool-btn" id="editPreviewBtn" title="刷新预览 (Ctrl+Shift+P)">预览</button>
+              <button type="button" class="edit-tool-btn" id="editRefreshBtn" title="刷新渲染 (Ctrl+Shift+P)">刷新</button>
               <button type="button" class="edit-tool-btn" id="editInsertImageBtn" title="插入图片文件">插图</button>
               <button type="button" class="edit-tool-btn" id="editEmbedImageBtn" title="内嵌图片 (data URI)">内嵌图</button>
               <button type="button" class="edit-tool-btn" id="editDeleteImageBtn" title="删除光标处图片">删图</button>
@@ -77,16 +77,11 @@ _SHELL = """
               <button type="button" class="edit-tool-btn ghost" id="editExitBtn" title="退出编辑 (Esc)">完成</button>
             </div>
           </div>
-          <div class="editor-split" id="editorSplit">
-            <div class="editor-source-wrap">
-              <label class="editor-pane-label" for="editorSource">Markdown 源码</label>
-              <textarea id="editorSource" class="editor-source" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" wrap="off" aria-label="Markdown 源码"></textarea>
-            </div>
-            <div class="editor-preview-wrap">
-              <div class="editor-pane-label">实时预览</div>
-              <div class="editor-preview article" id="editorPreview" tabindex="0"></div>
-            </div>
+          <!-- Obsidian 风格：在最终渲染效果中块级编辑；源码 textarea 仅作缓冲/测试钩子 -->
+          <div class="editor-live-wrap" id="editorLiveWrap">
+            <div class="editor-live article" id="editorLive" tabindex="0" aria-label="所见即所得编辑区"></div>
           </div>
+          <textarea id="editorSource" class="editor-source-sr" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" wrap="off" aria-hidden="true" tabindex="-1"></textarea>
         </section>
       </div>
     </main>
