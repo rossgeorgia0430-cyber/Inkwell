@@ -22,9 +22,12 @@ import json
 import html as html_module
 import io
 import importlib
+import re
+import shutil
 import time
 import threading
 import traceback
+import uuid
 import webbrowser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -41,7 +44,17 @@ _SAFE_OPEN_EXTS = {
 _MD_EXTS = {".md", ".markdown", ".mdown", ".mkd"}
 _READABLE_EXTS = _MD_EXTS | {".txt"}
 _MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
+_MAX_EMBED_IMAGE_BYTES = 8 * 1024 * 1024
 _PREFERENCE_KEYS = {"theme", "font"}
+_IMAGE_PICK_EXTS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".tif", ".tiff", ".ico", ".avif"
+}
+_IMAGE_MIME = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
+    ".svg": "image/svg+xml", ".tif": "image/tiff", ".tiff": "image/tiff",
+    ".ico": "image/x-icon", ".avif": "image/avif",
+}
 
 import ctypes
 from ctypes import wintypes
@@ -400,15 +413,110 @@ def _document_path(path) -> Path:
     return p
 
 
-def _read_text(path: str) -> str:
+def _read_text_meta(path: str):
+    """读取文档文本，返回 (text, encoding, mtime_ns)。
+
+    encoding 用于保存时尽量保持原编码。
+    注意：无 BOM 的 UTF-8 不能标成 utf-8-sig，否则保存时会凭空写入 BOM。
+    用同一 FD 的 read + fstat，避免读字节与 mtime 之间的 TOCTOU。
+    """
     p = _document_path(path)
-    data = p.read_bytes()
-    for enc in ("utf-8-sig", "utf-8", "gbk", "latin-1"):
+    with open(p, "rb") as f:
+        data = f.read()
+        mtime_ns = os.fstat(f.fileno()).st_mtime_ns
+    if data.startswith(b"\xef\xbb\xbf"):
         try:
-            return data.decode(enc)
+            return data.decode("utf-8-sig"), "utf-8-sig", mtime_ns
+        except (UnicodeDecodeError, UnicodeError):
+            pass
+    for enc in ("utf-8", "gbk", "latin-1"):
+        try:
+            return data.decode(enc), enc, mtime_ns
         except (UnicodeDecodeError, UnicodeError):
             continue
     raise UnicodeError("无法识别文件编码")
+
+
+def _read_text(path: str) -> str:
+    return _read_text_meta(path)[0]
+
+
+def _coerce_mtime_ns(value):
+    """把桥接层传来的 mtime 规范为 int；JSON Number 会丢 ns 精度，故优先收字符串。"""
+    if value is None or value is False:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        return int(value)
+    return int(value)
+
+
+def _mtime_token(mtime_ns) -> str:
+    """mtime 一律以十进制字符串过桥，避免 JS Number 丢精度。"""
+    return str(int(mtime_ns))
+
+
+def _encode_document_text(text: str, encoding: str):
+    """按打开时检测到的编码写回；无法编码时回退 UTF-8。返回 (bytes, used_encoding)。"""
+    if not isinstance(text, str):
+        raise ValueError("文档内容必须是文本")
+    enc = encoding if encoding in ("utf-8-sig", "utf-8", "gbk", "latin-1") else "utf-8"
+    try:
+        return text.encode(enc), enc
+    except (UnicodeEncodeError, LookupError):
+        return text.encode("utf-8"), "utf-8"
+
+
+def _write_text_atomic(path: Path, text: str, encoding: str = "utf-8",
+                       expected_mtime_ns=None):
+    """原子写盘，返回 (mtime_ns, used_encoding)。
+
+    若提供 expected_mtime_ns，在 replace 前再校验一次，缩小冲突窗口。
+    """
+    data, used_enc = _encode_document_text(text, encoding)
+    if len(data) > _MAX_DOCUMENT_BYTES:
+        raise ValueError("文件过大（上限 64 MB）")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if expected_mtime_ns is not None and path.exists():
+        if path.stat().st_mtime_ns != expected_mtime_ns:
+            raise FileExistsError("CONFLICT:%d" % path.stat().st_mtime_ns)
+    # 同目录临时文件 + replace，避免写一半被 watcher 读到
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_bytes(data)
+        if expected_mtime_ns is not None and path.exists():
+            if path.stat().st_mtime_ns != expected_mtime_ns:
+                raise FileExistsError("CONFLICT:%d" % path.stat().st_mtime_ns)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+    return path.stat().st_mtime_ns, used_enc
+
+
+def _md_image_markdown(alt: str, dest: str) -> str:
+    """生成安全的 Markdown 图片语法；必要时用 <dest> 包裹。"""
+    alt = re.sub(r"[\r\n\[\]]+", " ", alt or "").strip() or "image"
+    dest = (dest or "").replace("\r", "").replace("\n", "")
+    if re.search(r'[\s()<>]', dest):
+        dest_esc = dest.replace("(", "%28").replace(")", "%29").replace(">", "%3E")
+        return f"![{alt}](<{dest_esc}>)"
+    return f"![{alt}]({dest})"
 
 
 def _settings_path() -> Path:
@@ -454,17 +562,39 @@ class Api:
         self._chrome_installed = False
         self._normal_size = None
         self._mtime = None
+        self._encoding = "utf-8"
+        self._encoding_hint = None  # (path, encoding) from last successful read/render
+        self._watch_paused = False
+        self._save_lock = threading.RLock()
         self._state_lock = threading.RLock()
         self.preferences = _load_preferences()
+
+    def _remember_encoding(self, path, encoding):
+        with self._state_lock:
+            self._encoding_hint = (str(path), encoding)
+            if self.current_file and os.path.normcase(self.current_file) == os.path.normcase(str(path)):
+                self._encoding = encoding
+
+    def _same_active_path(self, path) -> bool:
+        with self._state_lock:
+            current = self.current_file
+        if not current or not path:
+            return False
+        try:
+            return os.path.normcase(os.path.normpath(str(path))) == \
+                os.path.normcase(os.path.normpath(str(current)))
+        except Exception:
+            return False
 
     # ---- 渲染 ----
     def _render_payload(self, path):
         try:
             resolved = _document_path(path)
-            md_text = _read_text(resolved)
+            md_text, encoding, _mtime = _read_text_meta(resolved)
             base_dir = str(resolved.parent)
             content, toc = _get_render().render_markdown(md_text, base_dir=base_dir)
             title = resolved.name
+            self._remember_encoding(resolved, encoding)
             return {"ok": True, "title": title, "content": content,
                     "toc": toc, "path": str(resolved)}
         except Exception as e:
@@ -482,11 +612,287 @@ class Api:
         """前端确认 payload 已显示后，再切换 watcher 与相对链接的活动文档。"""
         try:
             resolved = _document_path(path)
+            resolved_s = str(resolved)
+            mtime_ns = resolved.stat().st_mtime_ns
             with self._state_lock:
-                self.current_file = str(resolved)
-                self._mtime = resolved.stat().st_mtime_ns
+                self.current_file = resolved_s
+                self._mtime = mtime_ns
+                hint = self._encoding_hint
+                if hint and os.path.normcase(hint[0]) == os.path.normcase(resolved_s):
+                    self._encoding = hint[1]
             return {"ok": True}
         except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # ---- 编辑模式：源码读写 / 预览 / 插图 ----
+    def get_source(self, path=None):
+        """读取 Markdown 源文本（编辑模式的数据源）。"""
+        try:
+            target = path or self.current_file
+            if not target:
+                return {"ok": False, "error": "当前没有可编辑的文档"}
+            # 只允许读取当前活动文档，缩小桥接面
+            if path and self.current_file and not self._same_active_path(path):
+                # 允许在 activate 之前按 path 读（首次进入）；但若已有活动文档则必须一致
+                if self.current_file:
+                    return {"ok": False, "error": "只能编辑当前打开的文档"}
+            resolved = _document_path(target)
+            text, encoding, mtime_ns = _read_text_meta(resolved)
+            self._remember_encoding(resolved, encoding)
+            with self._state_lock:
+                if self.current_file and os.path.normcase(self.current_file) == os.path.normcase(str(resolved)):
+                    self._mtime = mtime_ns
+                # 进入编辑时先暂停监视，避免 get_source 往返期间被热重载打断
+                self._watch_paused = True
+            return {
+                "ok": True,
+                "path": str(resolved),
+                "title": resolved.name,
+                "text": text,
+                "encoding": encoding,
+                "mtime_ns": _mtime_token(mtime_ns),
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def set_watch_paused(self, paused):
+        """编辑模式中暂停文件监视自动重载，避免覆盖未保存内容。"""
+        with self._state_lock:
+            self._watch_paused = bool(paused)
+        return {"ok": True, "paused": self._watch_paused}
+
+    def preview_markdown(self, text, base_path=None):
+        """把编辑缓冲渲染为 HTML（不写盘、不切换活动文档）。"""
+        try:
+            if text is None:
+                text = ""
+            if not isinstance(text, str):
+                raise ValueError("预览内容必须是文本")
+            # 预览也受体积上限约束，防止超大缓冲拖垮渲染线程
+            if len(text.encode("utf-8", errors="replace")) > _MAX_DOCUMENT_BYTES:
+                raise ValueError("内容过大（上限 64 MB）")
+            source = base_path or self.current_file
+            if source and self.current_file and not self._same_active_path(source):
+                source = self.current_file
+            base_dir = str(Path(source).resolve().parent) if source else str(Path.cwd())
+            content, toc = _get_render().render_markdown(text, base_dir=base_dir)
+            title = Path(source).name if source else APP_NAME
+            return {
+                "ok": True,
+                "title": title,
+                "content": content,
+                "toc": toc,
+                "path": str(Path(source).resolve()) if source else "",
+            }
+        except Exception as e:
+            if os.environ.get("INKWELL_DEBUG") == "1":
+                traceback.print_exc()
+            error = html_module.escape(str(e))
+            return {"ok": False, "error": str(e), "title": "错误",
+                    "content": f"<h1>预览失败</h1><pre>{error}</pre>", "toc": ""}
+
+    def save_document(self, text, path=None, expected_mtime_ns=None):
+        """保存编辑缓冲并返回重新渲染后的 payload。
+
+        仅允许写入当前活动文档（path 必须与 current_file 一致或省略）。
+        mtime 以字符串过桥，避免 JS Number 丢 ns 精度导致伪冲突。
+        """
+        try:
+            if text is None:
+                text = ""
+            if not isinstance(text, str):
+                raise ValueError("文档内容必须是文本")
+            with self._state_lock:
+                target = self.current_file
+            if path:
+                if target and not self._same_active_path(path):
+                    return {"ok": False, "error": "只能保存当前打开的文档"}
+                if not target:
+                    target = path
+            if not target:
+                return {"ok": False, "error": "当前没有可保存的文档路径"}
+            resolved = _document_path(target)
+            expected = None
+            try:
+                expected = _coerce_mtime_ns(expected_mtime_ns)
+            except (TypeError, ValueError):
+                expected = None
+            with self._state_lock:
+                encoding = self._encoding or "utf-8"
+            with self._save_lock:
+                disk_mtime = resolved.stat().st_mtime_ns
+                if expected is not None and expected != disk_mtime:
+                    return {
+                        "ok": False,
+                        "conflict": True,
+                        "error": "文件已被其他程序修改，请先重新加载或强制保存",
+                        "mtime_ns": _mtime_token(disk_mtime),
+                    }
+                try:
+                    new_mtime, used_enc = _write_text_atomic(
+                        resolved, text, encoding,
+                        expected_mtime_ns=expected,
+                    )
+                except FileExistsError as exc:
+                    msg = str(exc)
+                    if msg.startswith("CONFLICT:"):
+                        cm = int(msg.split(":", 1)[1])
+                        return {
+                            "ok": False,
+                            "conflict": True,
+                            "error": "文件已被其他程序修改，请先重新加载或强制保存",
+                            "mtime_ns": _mtime_token(cm),
+                        }
+                    raise
+            self._remember_encoding(resolved, used_enc)
+            with self._state_lock:
+                # 自己写入后同步 mtime，避免 watcher 立刻把页面刷掉
+                if self.current_file and os.path.normcase(self.current_file) == os.path.normcase(str(resolved)):
+                    self._mtime = new_mtime
+                elif not self.current_file:
+                    self.current_file = str(resolved)
+                    self._mtime = new_mtime
+            payload = self._render_payload(resolved)
+            payload["mtime_ns"] = _mtime_token(new_mtime)
+            payload["saved"] = True
+            if used_enc != encoding:
+                payload["encoding_changed"] = used_enc
+            return payload
+        except Exception as e:
+            if os.environ.get("INKWELL_DEBUG") == "1":
+                traceback.print_exc()
+            return {"ok": False, "error": str(e)}
+
+    def save_document_as(self, text):
+        """另存为：弹出保存对话框后写入并切换活动文档。"""
+        try:
+            if text is None:
+                text = ""
+            if not isinstance(text, str):
+                raise ValueError("文档内容必须是文本")
+            default_dir = None
+            if self.current_file:
+                try:
+                    default_dir = str(Path(self.current_file).resolve().parent)
+                except Exception:
+                    default_dir = None
+            result = self._file_dialog(
+                "SAVE",
+                directory=default_dir,
+                save_filename=Path(self.current_file).name if self.current_file else "untitled.md",
+                file_types=("Markdown 与文本 (*.md;*.markdown;*.mdown;*.mkd;*.txt)",),
+            )
+            if not result:
+                return {"ok": False, "cancelled": True}
+            path = result if isinstance(result, str) else (result[0] if result else None)
+            if not path:
+                return {"ok": False, "cancelled": True}
+            # SAVE_DIALOG 可能指向尚不存在的文件；此时 _document_path 会失败。
+            p = Path(path)
+            if p.suffix.lower() not in _READABLE_EXTS:
+                p = p.with_suffix(".md")
+            if p.exists() and not p.is_file():
+                return {"ok": False, "error": "目标路径不是文件"}
+            if not p.parent.exists():
+                return {"ok": False, "error": "目标目录不存在"}
+            # 新文件默认 UTF-8，避免把 GBK 策略带到全新路径
+            encoding = "utf-8"
+            with self._save_lock:
+                new_mtime, used_enc = _write_text_atomic(p, text, encoding)
+            resolved = p.resolve()
+            self._remember_encoding(resolved, used_enc)
+            with self._state_lock:
+                self.current_file = str(resolved)
+                self._mtime = new_mtime
+            payload = self._render_payload(resolved)
+            payload["mtime_ns"] = _mtime_token(new_mtime)
+            payload["saved"] = True
+            return payload
+        except Exception as e:
+            if os.environ.get("INKWELL_DEBUG") == "1":
+                traceback.print_exc()
+            return {"ok": False, "error": str(e)}
+
+    def pick_image(self, mode="file"):
+        """选择图片并返回可插入 Markdown 的片段。
+
+        mode:
+          - file（默认）：复制到文档旁 images/ 目录，返回相对路径语法
+          - embed：以 data URI 内嵌（注意体积；适合单文件分发）
+        """
+        try:
+            if not self.current_file:
+                return {"ok": False, "error": "请先打开一个文档再插入图片"}
+            doc = _document_path(self.current_file)
+            result = self._file_dialog(
+                "OPEN",
+                allow_multiple=False,
+                file_types=("图片 (*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp;*.svg;*.tif;*.tiff;*.ico;*.avif)",),
+            )
+            if not result:
+                return {"ok": False, "cancelled": True}
+            src_path = result[0] if isinstance(result, (list, tuple)) else result
+            src = Path(src_path).resolve(strict=True)
+            if not src.is_file():
+                return {"ok": False, "error": "图片文件不存在"}
+            ext = src.suffix.lower()
+            if ext not in _IMAGE_PICK_EXTS:
+                return {"ok": False, "error": "不支持的图片类型"}
+            size = src.stat().st_size
+            if size <= 0:
+                return {"ok": False, "error": "图片为空"}
+            # 文件模式也限制体积，避免误选超大资源
+            if size > _MAX_EMBED_IMAGE_BYTES * 4:
+                return {"ok": False, "error": "图片过大（上限 32 MB）"}
+            if size > _MAX_EMBED_IMAGE_BYTES and str(mode).lower() == "embed":
+                return {"ok": False, "error": "内嵌图片不能超过 8 MB，请改用「插图」"}
+
+            alt = src.stem
+            # 清理 alt 中的 ] 等，避免破坏 ![alt](...) 边界
+            alt = re.sub(r"[\r\n\[\]]+", " ", alt).strip() or "image"
+
+            if str(mode).lower() == "embed":
+                import base64
+                data = src.read_bytes()
+                if len(data) > _MAX_EMBED_IMAGE_BYTES:
+                    return {"ok": False, "error": "内嵌图片不能超过 8 MB"}
+                mime = _IMAGE_MIME.get(ext, "application/octet-stream")
+                b64 = base64.b64encode(data).decode("ascii")
+                markdown = _md_image_markdown(alt, f"data:{mime};base64,{b64}")
+                return {
+                    "ok": True,
+                    "mode": "embed",
+                    "markdown": markdown,
+                    "alt": alt,
+                    "bytes": len(data),
+                }
+
+            # 相对路径模式：拷到文档目录下 images/
+            images_dir = doc.parent / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            # 文件名清洗：去掉空格与括号，避免破坏 MD 图片语法
+            safe_stem = re.sub(r"[^\w.\-]+", "-", src.stem, flags=re.UNICODE).strip("-._") or "image"
+            dest_name = f"{safe_stem}{ext}"
+            dest = images_dir / dest_name
+            if dest.exists():
+                dest_name = f"{safe_stem}-{uuid.uuid4().hex[:8]}{ext}"
+                dest = images_dir / dest_name
+            shutil.copy2(src, dest)
+            rel = Path("images") / dest_name
+            # Markdown 中统一用正斜杠，跨工具兼容更好
+            rel_posix = rel.as_posix()
+            markdown = _md_image_markdown(alt, rel_posix)
+            return {
+                "ok": True,
+                "mode": "file",
+                "markdown": markdown,
+                "path": str(dest),
+                "relative": rel_posix,
+                "alt": alt,
+            }
+        except Exception as e:
+            if os.environ.get("INKWELL_DEBUG") == "1":
+                traceback.print_exc()
             return {"ok": False, "error": str(e)}
 
     def set_preference(self, key, value):
@@ -508,11 +914,25 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def _file_dialog(self, kind, **kwargs):
+        """兼容 pywebview 新旧 FileDialog API。"""
+        dialog = None
+        file_dialog = getattr(webview, "FileDialog", None)
+        if file_dialog is not None:
+            dialog = getattr(file_dialog, kind, None)
+        if dialog is None:
+            # 旧版常量：OPEN_DIALOG / SAVE_DIALOG
+            dialog = getattr(webview, kind + "_DIALOG", None)
+        if dialog is None:
+            raise RuntimeError("当前 pywebview 不支持文件对话框")
+        return self._window.create_file_dialog(dialog, **kwargs)
+
     def open_dialog(self):
         """弹系统文件选择框，选中后渲染并返回 payload。"""
         try:
-            result = self._window.create_file_dialog(
-                webview.OPEN_DIALOG, allow_multiple=False,
+            result = self._file_dialog(
+                "OPEN",
+                allow_multiple=False,
                 # 描述只能含「单词字符+空格」：pywebview 6.1 的 parse_file_type 用
                 # ^([\w ]+)\( 校验，描述里出现 '/' 等标点会抛错被吞掉→对话框返回 None
                 # （表现为「打开文件」按钮点了没反应）。故用「与」连接，避免斜杠。
@@ -752,7 +1172,9 @@ def _watch_file(api: Api):
         with api._state_lock:
             path = api.current_file
             previous_mtime = api._mtime
-        if not path:
+            paused = api._watch_paused
+        if not path or paused:
+            # 编辑模式暂停监视，避免外部 mtime 变化冲掉未保存缓冲。
             continue
         try:
             mt = os.stat(path).st_mtime_ns
@@ -762,7 +1184,7 @@ def _watch_file(api: Api):
             payload = api._render_payload(path)
             with api._state_lock:
                 # 渲染期间用户可能已经切换文档；旧结果不得覆盖新页面或活动路径。
-                if api.current_file != path:
+                if api.current_file != path or api._watch_paused:
                     continue
                 api._mtime = mt
             try:

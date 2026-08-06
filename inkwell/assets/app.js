@@ -422,7 +422,7 @@
   // 点击图示本体也能进入灯箱，与点击图片的交互保持一致。
   function onContentDiagramClick(e) {
     var diagram = e.target.closest && e.target.closest(".mermaid-diagram");
-    if (!diagram || !content.contains(diagram)) return;
+    if (!diagram || !inRenderableRoot(diagram)) return;
     var block = diagram.closest(".mermaid-block");
     if (!block || !block.classList.contains("is-diagram")) return;
     e.preventDefault();
@@ -438,10 +438,16 @@
   }
 
   function refreshMermaidDiagrams() {
-    if (!content || !getMermaidApi()) return;
-    content.querySelectorAll(".mermaid-block.is-diagram").forEach(function (block) {
-      block.removeAttribute("data-mermaid-rendered-theme");
-      renderMermaidBlock(block, false);
+    if (!getMermaidApi()) return;
+    var roots = [];
+    if (content) roots.push(content);
+    var ep = $("editorPreview");
+    if (ep) roots.push(ep);
+    roots.forEach(function (root) {
+      root.querySelectorAll(".mermaid-block.is-diagram").forEach(function (block) {
+        block.removeAttribute("data-mermaid-rendered-theme");
+        renderMermaidBlock(block, false);
+      });
     });
   }
 
@@ -507,7 +513,7 @@
   }
 
   function selectImage(img) {
-    if (!img || !content.contains(img)) return;
+    if (!img || !inRenderableRoot(img)) return;
     selectedImage = img;
   }
 
@@ -857,7 +863,7 @@
 
   function onContentImageClick(e) {
     var img = e.target.closest && e.target.closest(".image-block img");
-    if (!img || !content.contains(img)) return;
+    if (!img || !inRenderableRoot(img)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     openImageViewer(img);
@@ -960,9 +966,16 @@
     });
   }
 
+  function inRenderableRoot(el) {
+    if (!el) return false;
+    if (content && content.contains(el)) return true;
+    var ep = editorPreview || $("editorPreview");
+    return !!(ep && ep.contains(el));
+  }
+
   function onContentActionClick(e) {
     var mermaidButton = e.target.closest && e.target.closest("[data-mermaid-action]");
-    if (mermaidButton && content.contains(mermaidButton)) {
+    if (mermaidButton && inRenderableRoot(mermaidButton)) {
       e.preventDefault();
       e.stopPropagation();
       var mAction = mermaidButton.getAttribute("data-mermaid-action");
@@ -972,7 +985,7 @@
       return;
     }
     var btn = e.target.closest && e.target.closest("[data-copy-action]");
-    if (!btn || !content.contains(btn)) return;
+    if (!btn || !inRenderableRoot(btn)) return;
     var action = btn.getAttribute("data-copy-action");
     if (action !== "latex" && action !== "code" && action !== "image") return;
     e.preventDefault();
@@ -1314,6 +1327,612 @@
   }
 
   // ============================================================
+  // 编辑模式：Markdown 源码为真相，预览走同一套 render 管线
+  // ============================================================
+  var editMode = false;
+  var editDirty = false;
+  var editBaseline = "";
+  var editMtimeNs = null;
+  var editPath = null;
+  var editPreviewTimer = null;
+  var editPreviewSeq = 0;
+  var editEnterGen = 0;
+  var editSaveGen = 0;
+  var editSaving = false;
+  var editorSource = null;
+  var editorPreview = null;
+  var editorPane = null;
+  var editorStatus = null;
+
+  function setEditStatus(msg, kind) {
+    if (!editorStatus) return;
+    editorStatus.textContent = msg || "";
+    editorStatus.classList.remove("warn", "ok");
+    if (kind) editorStatus.classList.add(kind);
+  }
+
+  function updateDirtyUI() {
+    if (docTitle) {
+      if (editDirty) docTitle.classList.add("dirty");
+      else docTitle.classList.remove("dirty");
+    }
+    var btn = $("editBtn");
+    if (btn) {
+      btn.classList.toggle("active", editMode);
+      btn.setAttribute("aria-pressed", editMode ? "true" : "false");
+      btn.title = editMode
+        ? (editDirty ? "退出编辑（有未保存更改）" : "退出编辑模式 (Ctrl+E)")
+        : "编辑模式 (Ctrl+E)";
+    }
+    var saveBtn = $("editSaveBtn");
+    if (saveBtn) saveBtn.classList.toggle("primary", editDirty);
+  }
+
+  function setDirty(next) {
+    editDirty = !!next;
+    updateDirtyUI();
+  }
+
+  function markDirtyFromEditor() {
+    if (!editMode || !editorSource) return;
+    var now = editorSource.value;
+    setDirty(now !== editBaseline);
+    scheduleEditPreview();
+  }
+
+  // —— 围栏 / 行内代码保护：找图片、插片段时不能破坏代码块边界 ——
+  function findProtectedRanges(text) {
+    var ranges = [];
+    var i = 0, n = text.length;
+    while (i < n) {
+      // 围栏代码：行首 0–3 空格 + ``` 或 ~~~
+      if ((i === 0 || text.charAt(i - 1) === "\n")) {
+        var j = i;
+        var spaces = 0;
+        while (spaces < 3 && j < n && text.charAt(j) === " ") { spaces++; j++; }
+        var ch = text.charAt(j);
+        if (ch === "`" || ch === "~") {
+          var marker = ch;
+          var openLen = 0;
+          while (j < n && text.charAt(j) === marker) { openLen++; j++; }
+          if (openLen >= 3) {
+            // 跳到行尾
+            while (j < n && text.charAt(j) !== "\n") j++;
+            if (j < n && text.charAt(j) === "\n") j++;
+            var bodyStart = j;
+            var closed = false;
+            while (j < n) {
+              var lineStart = j;
+              var ls = 0;
+              while (ls < 3 && j < n && text.charAt(j) === " ") { ls++; j++; }
+              var closeLen = 0;
+              while (j < n && text.charAt(j) === marker) { closeLen++; j++; }
+              if (closeLen >= openLen) {
+                // 闭合行余下只能空白
+                var k = j;
+                while (k < n && (text.charAt(k) === " " || text.charAt(k) === "\t")) k++;
+                if (k >= n || text.charAt(k) === "\n") {
+                  while (k < n && text.charAt(k) !== "\n") k++;
+                  if (k < n && text.charAt(k) === "\n") k++;
+                  ranges.push({ start: i, end: k, kind: "fence" });
+                  i = k;
+                  closed = true;
+                  break;
+                }
+              }
+              j = lineStart;
+              while (j < n && text.charAt(j) !== "\n") j++;
+              if (j < n && text.charAt(j) === "\n") j++;
+            }
+            if (closed) continue;
+            // 未闭合：从开到文末视为保护
+            ranges.push({ start: i, end: n, kind: "fence" });
+            break;
+          }
+        }
+      }
+      // 行内代码：`...` / ``...``
+      if (text.charAt(i) === "`") {
+        var ticks = 0, t = i;
+        while (t < n && text.charAt(t) === "`") { ticks++; t++; }
+        if (ticks > 0) {
+          var close = text.indexOf(new Array(ticks + 1).join("`"), t);
+          // 不允许跨行的简化处理：若中间有换行则不当作 inline code 保护
+          if (close !== -1) {
+            var mid = text.slice(t, close);
+            if (mid.indexOf("\n") === -1) {
+              ranges.push({ start: i, end: close + ticks, kind: "inline" });
+              i = close + ticks;
+              continue;
+            }
+          }
+        }
+      }
+      i++;
+    }
+    return ranges;
+  }
+
+  function inProtectedRange(ranges, pos) {
+    for (var r = 0; r < ranges.length; r++) {
+      if (pos >= ranges[r].start && pos < ranges[r].end) return ranges[r];
+    }
+    return null;
+  }
+
+  // 在 pos 处查找 ![alt](dest) —— dest 支持 data URI 与普通路径，正确配对括号
+  function findImageAt(text, pos) {
+    var ranges = findProtectedRanges(text);
+    var re = /!\[([^\]]*)\]\(/g;
+    var m;
+    while ((m = re.exec(text)) !== null) {
+      var start = m.index;
+      var destStart = re.lastIndex;
+      if (inProtectedRange(ranges, start)) continue;
+      // 扫描 destination：括号深度，同时处理 <...> 与引号 title
+      var depth = 1;
+      var p = destStart;
+      var inAngle = false;
+      var quote = null;
+      while (p < text.length && depth > 0) {
+        var c = text.charAt(p);
+        if (quote) {
+          if (c === quote) quote = null;
+          p++;
+          continue;
+        }
+        if (inAngle) {
+          if (c === ">") inAngle = false;
+          p++;
+          continue;
+        }
+        if (c === "<") { inAngle = true; p++; continue; }
+        if (c === '"' || c === "'") { quote = c; p++; continue; }
+        if (c === "(") { depth++; p++; continue; }
+        if (c === ")") {
+          depth--;
+          p++;
+          if (depth === 0) break;
+          continue;
+        }
+        // 裸 data URI / 路径中不应出现裸换行（允许 base64 行内）
+        if (c === "\n" && depth === 1 && !quote && !inAngle) break;
+        p++;
+      }
+      if (depth !== 0) continue;
+      var end = p;
+      if (pos >= start && pos <= end) {
+        return {
+          start: start,
+          end: end,
+          alt: m[1],
+          dest: text.slice(destStart, end - 1),
+          markdown: text.slice(start, end)
+        };
+      }
+      re.lastIndex = end;
+    }
+    return null;
+  }
+
+  function insertAtCursor(snippet, opts) {
+    if (!editorSource) return;
+    opts = opts || {};
+    var ta = editorSource;
+    var start = ta.selectionStart;
+    var end = ta.selectionEnd;
+    var val = ta.value;
+    var before = val.slice(0, start);
+    var after = val.slice(end);
+    var piece = snippet;
+    // 块级插入：保证前后有空行，避免粘进段落中破坏图片/围栏边界
+    if (opts.block) {
+      if (before && !/\n\n$/.test(before)) {
+        piece = (/\n$/.test(before) ? "\n" : "\n\n") + piece;
+      }
+      if (after && !/^\n/.test(after)) piece = piece + "\n";
+      else if (after && !/^\n\n/.test(after) && !/^\n$/.test(after)) {
+        // keep single newline as-is
+      }
+    }
+    ta.value = before + piece + after;
+    var caret = (before + piece).length;
+    if (opts.selectInner) {
+      var a = (before + piece).indexOf(opts.selectInner);
+      if (a >= 0) {
+        ta.selectionStart = a;
+        ta.selectionEnd = a + opts.selectInner.length;
+      } else {
+        ta.selectionStart = ta.selectionEnd = caret;
+      }
+    } else {
+      ta.selectionStart = ta.selectionEnd = caret;
+    }
+    ta.focus();
+    markDirtyFromEditor();
+  }
+
+  function deleteImageAtCursor() {
+    if (!editorSource) return;
+    var ta = editorSource;
+    var pos = ta.selectionStart;
+    var hit = findImageAt(ta.value, pos);
+    if (!hit) {
+      // 也尝试选区中点
+      hit = findImageAt(ta.value, Math.floor((ta.selectionStart + ta.selectionEnd) / 2));
+    }
+    if (!hit) {
+      setEditStatus("光标处未找到图片语法 ![…](…)", "warn");
+      toast("光标处没有可删除的图片");
+      return;
+    }
+    // 若图片独占一行（含前后空白），连同行一起删，避免残留空段
+    var text = ta.value;
+    var lineStart = text.lastIndexOf("\n", hit.start - 1) + 1;
+    var lineEnd = text.indexOf("\n", hit.end);
+    if (lineEnd < 0) lineEnd = text.length;
+    var line = text.slice(lineStart, lineEnd);
+    var onlyImage = line.replace(/^\s+|\s+$/g, "") === hit.markdown;
+    var delStart = onlyImage ? lineStart : hit.start;
+    var delEnd = onlyImage ? (lineEnd < text.length ? lineEnd + 1 : lineEnd) : hit.end;
+    // 独占行时若上一行也空，吞掉多余空行
+    if (onlyImage && delStart >= 2 && text.slice(delStart - 2, delStart) === "\n\n") {
+      delStart -= 1;
+    }
+    ta.value = text.slice(0, delStart) + text.slice(delEnd);
+    ta.selectionStart = ta.selectionEnd = delStart;
+    ta.focus();
+    markDirtyFromEditor();
+    setEditStatus("已删除图片", "ok");
+  }
+
+  function insertCodeBlock() {
+    insertAtCursor("```\ncode\n```", { block: true, selectInner: "code" });
+    setEditStatus("已插入代码块", "ok");
+  }
+
+  function insertMermaidBlock() {
+    var sample = "```mermaid\nflowchart LR\n  A[开始] --> B[结束]\n```";
+    insertAtCursor(sample, { block: true, selectInner: "A[开始] --> B[结束]" });
+    setEditStatus("已插入流程图（Mermaid）", "ok");
+  }
+
+  function insertMathBlock() {
+    insertAtCursor("$$\nE = mc^2\n$$", { block: true, selectInner: "E = mc^2" });
+    setEditStatus("已插入块级公式", "ok");
+  }
+
+  function initPreviewContent(root) {
+    if (!root) return;
+    renderMath(root);
+    addCodeCopyButtons(root);
+    initMermaidDiagrams(root);
+    setupImageCopySupport(root);
+  }
+
+  function applyEditPreview(p) {
+    if (!editorPreview || !editMode) return;
+    if (!p) return;
+    if (p.ok === false && !p.content) {
+      editorPreview.innerHTML = "<p class='editor-preview-error'>预览失败</p>";
+      return;
+    }
+    editorPreview.innerHTML = p.content || "";
+    initPreviewContent(editorPreview);
+    if (toc && p.toc != null) toc.innerHTML = p.toc || "";
+  }
+
+  function scheduleEditPreview() {
+    if (!editMode) return;
+    clearTimeout(editPreviewTimer);
+    editPreviewTimer = setTimeout(runEditPreview, 380);
+  }
+
+  function runEditPreview(opts) {
+    opts = opts || {};
+    if (!editMode || !editorSource) return;
+    var a = api();
+    if (!a || !a.preview_markdown) return;
+    var text = editorSource.value;
+    var seq = ++editPreviewSeq;
+    a.preview_markdown(text, editPath || currentPath).then(function (p) {
+      if (!editMode || seq !== editPreviewSeq) return;
+      applyEditPreview(p);
+      if (p && p.ok === false) setEditStatus(p.error || "预览失败", "warn");
+      else if (opts.fromButton) setEditStatus("预览已刷新", "ok");
+    }).catch(function () {
+      if (!editMode || seq !== editPreviewSeq) return;
+      setEditStatus("预览请求失败", "warn");
+    });
+  }
+
+  function pauseWatcher(paused) {
+    var a = api();
+    if (a && a.set_watch_paused) a.set_watch_paused(!!paused);
+  }
+
+  function confirmLeaveEdit() {
+    if (!editDirty) return true;
+    return window.confirm("有未保存的修改，确定放弃并退出编辑？");
+  }
+
+  function enterEditMode() {
+    if (editMode) return;
+    if (!currentPath) {
+      toast("请先打开一个 Markdown 文件再编辑");
+      return;
+    }
+    var a = api();
+    if (!a || !a.get_source) {
+      toast("编辑接口不可用");
+      return;
+    }
+    // 进入编辑前关闭搜索 / 灯箱 / 变量高亮，避免 DOM 与源码不同步
+    if (imageViewer && imageViewer.classList.contains("open")) closeImageViewer();
+    closeSearch();
+    clearVarHighlights();
+    clearSelectedImage();
+    // 尽早暂停监视，覆盖 get_source 往返窗口
+    pauseWatcher(true);
+
+    var gen = ++editEnterGen;
+    var pathAtRequest = currentPath;
+    a.get_source(pathAtRequest).then(function (res) {
+      if (gen !== editEnterGen) return;
+      if (!samePath(currentPath, pathAtRequest)) {
+        pauseWatcher(false);
+        return;
+      }
+      if (editMode) return;
+      if (!res || !res.ok) {
+        pauseWatcher(false);
+        toast((res && res.error) || "无法读取源文件");
+        return;
+      }
+      editorSource = $("editorSource");
+      editorPreview = $("editorPreview");
+      editorPane = $("editorPane");
+      editorStatus = $("editorStatus");
+      if (!editorSource || !editorPane) {
+        pauseWatcher(false);
+        toast("编辑器界面未就绪");
+        return;
+      }
+      editMode = true;
+      editPath = res.path || currentPath;
+      editMtimeNs = res.mtime_ns != null ? String(res.mtime_ns) : null;
+      editBaseline = res.text || "";
+      editorSource.value = editBaseline;
+      setDirty(false);
+      document.body.classList.add("edit-mode");
+      if (editorPane) editorPane.hidden = false;
+      updateDirtyUI();
+      setEditStatus("编辑中 · " + (res.title || PathBase(editPath)), "ok");
+      // 初始预览
+      runEditPreview();
+      setTimeout(function () {
+        try { editorSource.focus(); } catch (e) {}
+      }, 30);
+    }).catch(function () {
+      if (gen !== editEnterGen) return;
+      pauseWatcher(false);
+      toast("读取源文件失败");
+    });
+  }
+
+  function PathBase(p) {
+    if (!p) return "";
+    var s = String(p).replace(/\\/g, "/");
+    var i = s.lastIndexOf("/");
+    return i >= 0 ? s.slice(i + 1) : s;
+  }
+
+  function exitEditMode(opts) {
+    opts = opts || {};
+    if (!editMode) {
+      editEnterGen += 1; // 取消进行中的 enter
+      return;
+    }
+    if (!opts.force && !confirmLeaveEdit()) return;
+    clearTimeout(editPreviewTimer);
+    editEnterGen += 1;
+    editPreviewSeq += 1;
+    editSaveGen += 1; // 使进行中的 finishSave 失效（放弃编辑）
+    editMode = false;
+    setDirty(false);
+    editBaseline = "";
+    editMtimeNs = null;
+    editPath = null;
+    document.body.classList.remove("edit-mode");
+    if (editorPane) editorPane.hidden = true;
+    if (editorSource) editorSource.value = "";
+    if (editorPreview) editorPreview.innerHTML = "";
+    pauseWatcher(false);
+    updateDirtyUI();
+    setEditStatus("");
+    // 退出后重新用磁盘内容刷新阅读视图（除非调用方刚保存并已 render）
+    if (!opts.skipReload && currentPath) {
+      var a = api();
+      if (a && a.render_path) {
+        a.render_path(currentPath).then(function (p) {
+          if (p) {
+            var keep = main.scrollTop;
+            renderInto(p);
+            main.scrollTop = keep;
+          }
+        });
+      }
+    }
+  }
+
+  function toggleEditMode() {
+    if (editMode) exitEditMode();
+    else enterEditMode();
+  }
+
+  function saveEdit(opts) {
+    opts = opts || {};
+    if (!editMode || !editorSource || editSaving) return Promise.resolve(null);
+    var a = api();
+    if (!a || !a.save_document) {
+      toast("保存接口不可用");
+      return Promise.resolve(null);
+    }
+    editSaving = true;
+    var saveGen = ++editSaveGen;
+    setEditStatus("保存中…");
+    var text = editorSource.value;
+    var path = editPath || currentPath;
+    function unlock() { editSaving = false; }
+    return a.save_document(text, path, editMtimeNs).then(function (p) {
+      if (saveGen !== editSaveGen) { unlock(); return null; }
+      if (!p) { unlock(); setEditStatus("保存失败", "warn"); return null; }
+      if (p.conflict) {
+        var force = window.confirm((p.error || "文件冲突") + "\n\n是否强制覆盖？");
+        if (!force) {
+          unlock();
+          setEditStatus("已取消（磁盘文件已变更）", "warn");
+          return p;
+        }
+        // 保持 editSaving 直到强制保存结束
+        return a.save_document(text, path, null).then(function (p2) {
+          if (saveGen !== editSaveGen) { unlock(); return null; }
+          unlock();
+          return finishSave(p2, opts, saveGen);
+        }).catch(function () {
+          unlock();
+          setEditStatus("保存失败", "warn");
+          toast("保存失败");
+          return null;
+        });
+      }
+      unlock();
+      return finishSave(p, opts, saveGen);
+    }).catch(function () {
+      unlock();
+      setEditStatus("保存失败", "warn");
+      toast("保存失败");
+      return null;
+    });
+  }
+
+  function finishSave(p, opts, saveGen) {
+    // 用户已放弃编辑时，不把保存结果灌回 UI（磁盘可能已写入）
+    if (saveGen != null && saveGen !== editSaveGen) return p;
+    if (!p || p.ok === false) {
+      setEditStatus((p && p.error) || "保存失败", "warn");
+      toast((p && p.error) || "保存失败");
+      return p;
+    }
+    if (!editMode) {
+      toast("已保存到磁盘");
+      return p;
+    }
+    editBaseline = editorSource ? editorSource.value : editBaseline;
+    editMtimeNs = p.mtime_ns != null ? String(p.mtime_ns) : editMtimeNs;
+    setDirty(false);
+    if (p.path) {
+      editPath = p.path;
+      currentPath = p.path;
+      setDocTitle(p.title || PathBase(p.path));
+    }
+    // 更新预览与阅读区缓存内容
+    applyEditPreview(p);
+    if (content && p.content != null) {
+      // 同步阅读区 DOM，退出编辑时无需再请求
+      content.innerHTML = p.content || "";
+      if (toc && p.toc != null) toc.innerHTML = p.toc || "";
+      initContent();
+    }
+    if (p.path && api() && api().activate_path) api().activate_path(p.path);
+    if (p.encoding_changed) {
+      setEditStatus("已保存（编码已改为 " + p.encoding_changed + "）", "ok");
+    } else {
+      setEditStatus("已保存", "ok");
+    }
+    toast("已保存");
+    if (opts && opts.exit) exitEditMode({ force: true, skipReload: true });
+    return p;
+  }
+
+  function insertImage(mode) {
+    if (!editMode) return;
+    var a = api();
+    if (!a || !a.pick_image) {
+      toast("插图接口不可用");
+      return;
+    }
+    setEditStatus(mode === "embed" ? "选择要内嵌的图片…" : "选择图片…");
+    var gen = editEnterGen;
+    a.pick_image(mode || "file").then(function (res) {
+      if (!editMode || !editorSource || gen !== editEnterGen) return;
+      if (!res) return;
+      if (res.cancelled) { setEditStatus("已取消", ""); return; }
+      if (!res.ok) {
+        setEditStatus(res.error || "插入失败", "warn");
+        toast(res.error || "插入失败");
+        return;
+      }
+      // data URI 很长：作为块级插入，前后空行，避免破坏相邻语法
+      insertAtCursor(res.markdown, { block: true });
+      setEditStatus(mode === "embed" ? "已内嵌图片" : ("已插入 " + (res.relative || "图片")), "ok");
+    }).catch(function () {
+      if (!editMode) return;
+      setEditStatus("插入图片失败", "warn");
+    });
+  }
+
+  function bindEditorUI() {
+    editorSource = $("editorSource");
+    editorPreview = $("editorPreview");
+    editorPane = $("editorPane");
+    editorStatus = $("editorStatus");
+    var editBtn = $("editBtn");
+    if (editBtn) editBtn.addEventListener("click", toggleEditMode);
+    if ($("editSaveBtn")) $("editSaveBtn").addEventListener("click", function () { saveEdit(); });
+    if ($("editPreviewBtn")) $("editPreviewBtn").addEventListener("click", function () { runEditPreview({ fromButton: true }); });
+    if ($("editInsertImageBtn")) $("editInsertImageBtn").addEventListener("click", function () { insertImage("file"); });
+    if ($("editEmbedImageBtn")) $("editEmbedImageBtn").addEventListener("click", function () { insertImage("embed"); });
+    if ($("editDeleteImageBtn")) $("editDeleteImageBtn").addEventListener("click", deleteImageAtCursor);
+    if ($("editInsertCodeBtn")) $("editInsertCodeBtn").addEventListener("click", insertCodeBlock);
+    if ($("editInsertMermaidBtn")) $("editInsertMermaidBtn").addEventListener("click", insertMermaidBlock);
+    if ($("editInsertMathBtn")) $("editInsertMathBtn").addEventListener("click", insertMathBlock);
+    if ($("editExitBtn")) $("editExitBtn").addEventListener("click", function () {
+      exitEditMode();
+    });
+    if (editorSource) {
+      editorSource.addEventListener("input", markDirtyFromEditor);
+      editorSource.addEventListener("keydown", function (e) {
+        var ctrl = e.ctrlKey || e.metaKey;
+        if (ctrl && (e.key === "s" || e.key === "S")) {
+          e.preventDefault();
+          saveEdit();
+        } else if (ctrl && e.shiftKey && (e.key === "p" || e.key === "P")) {
+          e.preventDefault();
+          runEditPreview({ fromButton: true });
+        } else if (e.key === "Tab") {
+          // 插入两个空格，避免焦点跳到工具栏
+          e.preventDefault();
+          var ta = editorSource;
+          var s = ta.selectionStart, en = ta.selectionEnd;
+          if (s !== en) {
+            // 多行：给选中的每行前加缩进
+            var block = ta.value.slice(s, en);
+            var indented = block.split("\n").map(function (line) { return "  " + line; }).join("\n");
+            ta.value = ta.value.slice(0, s) + indented + ta.value.slice(en);
+            ta.selectionStart = s;
+            ta.selectionEnd = s + indented.length;
+          } else {
+            ta.value = ta.value.slice(0, s) + "  " + ta.value.slice(en);
+            ta.selectionStart = ta.selectionEnd = s + 2;
+          }
+          markDirtyFromEditor();
+        }
+      });
+    }
+  }
+
+  // ============================================================
   // 文档间跳转：历史栈（后退/前进）+ 正文 .md 链接拦截（支持递归深入）
   // ============================================================
   var navHistory = [], navIndex = -1, navGeneration = 0;
@@ -1362,6 +1981,10 @@
 
   // 前进式跳转（点击链接 / 打开新文件）：截断 forward 分支，压入新条目
   function navTo(p, anchor) {
+    if (editMode) {
+      if (editDirty && !window.confirm("有未保存的修改，切换文档将丢失修改。继续？")) return;
+      exitEditMode({ force: true, skipReload: true });
+    }
     navSaveScroll();
     navHistory = navHistory.slice(0, navIndex + 1);
     navHistory.push({ path: p.path, anchor: anchor || "", scrollTop: 0 });
@@ -1373,6 +1996,10 @@
   function navGo(delta) {
     var target = navIndex + delta;
     if (target < 0 || target >= navHistory.length) return;
+    if (editMode) {
+      if (editDirty && !window.confirm("有未保存的修改，切换文档将丢失修改。继续？")) return;
+      exitEditMode({ force: true, skipReload: true });
+    }
     var a = api(); if (!a || !a.render_path) return;
     navSaveScroll();
     navIndex = target;
@@ -1405,22 +2032,39 @@
 
   function onContentLinkClick(e) {
     var a = e.target.closest("a");
-    if (!a || !content.contains(a)) return;
+    if (!a || !inRenderableRoot(a)) return;
     var href = a.getAttribute("href");
     if (href == null || href === "") return;
     if (href.charAt(0) === "#") {                    // 同页锚点
-      e.preventDefault(); lockSpy(); scrollToHeading(decodeURIComponent(href.slice(1))); return;
+      e.preventDefault();
+      var id = decodeURIComponent(href.slice(1));
+      // 预览区内锚点滚预览容器；正文滚主滚动区
+      var ep = editorPreview || $("editorPreview");
+      if (editMode && ep && ep.contains(a)) {
+        var target = null;
+        try {
+          target = ep.querySelector("#" + (window.CSS && CSS.escape ? CSS.escape(id) : id.replace(/([^a-zA-Z0-9\-_])/g, "\\$1")));
+        } catch (err) { target = document.getElementById(id); }
+        if (target && ep.contains(target)) target.scrollIntoView({ block: "start" });
+        return;
+      }
+      lockSpy(); scrollToHeading(id); return;
     }
     e.preventDefault();                              // 其余一律拦截，避免 webview 整页跳走
     if (isExternalUrl(href)) {                       // http/mailto/tel → 系统浏览器
       var ax = api(); if (ax && ax.open_external) ax.open_external(href); return;
     }
     var clean = href.split("#")[0];
-    if (/\.(md|markdown|mdown|mkd)$/i.test(clean)) { navigateToMd(href); return; }   // 本地 .md → 应用内跳转
+    if (/\.(md|markdown|mdown|mkd)$/i.test(clean)) {
+      if (editMode && editDirty && !window.confirm("有未保存的修改，跳转将丢失修改。继续？")) return;
+      navigateToMd(href); return;
+    }
     var ay = api(); if (ay && ay.open_external) ay.open_external(href);              // 其它本地文件 → 系统默认程序
   }
 
   function openFileDialog() {
+    if (editMode && editDirty && !window.confirm("有未保存的修改，打开其他文件将丢失修改。继续？")) return;
+    if (editMode) exitEditMode({ force: true, skipReload: true });
     var a = api(); if (!a) return;
     var generation = beginNavigation();
     a.open_dialog().then(function (p) {
@@ -1443,6 +2087,8 @@
   function applyPayload(p) {
     if (!p || p.cancelled) return;
     if (p.ok === false && !p.content) return;
+    // 编辑模式中绝不接受热重载，防止覆盖源码缓冲。
+    if (editMode) return;
     // watcher 可能在换页期间送达旧文档 payload，绝不允许它覆盖当前页。
     if (!samePath(p.path, currentPath)) return;
     var keep = main.scrollTop;
@@ -1478,9 +2124,11 @@
     $("sidebarToggle").addEventListener("click", toggleSidebar);
     $("themeBtn").addEventListener("click", toggleTheme);
     $("searchBtn").addEventListener("click", function () {
+      if (editMode) return; // 编辑态搜索正文无意义
       if (searchBar.classList.contains("open")) closeSearch(); else openSearch();
     });
     $("openBtn").addEventListener("click", openFileDialog);
+    bindEditorUI();
 
     // 文档跳转：后退/前进 + 正文链接拦截
     $("navBack").addEventListener("click", navBack);
@@ -1492,11 +2140,25 @@
     content.addEventListener("mousedown", function (e) {
       if (!(e.target.closest && e.target.closest("img"))) clearSelectedImage();
     });
+    // 预览区复用正文交互（复制 / 图片灯箱 / mermaid / 链接拦截）
+    var previewEl = $("editorPreview");
+    if (previewEl) {
+      previewEl.addEventListener("click", onContentActionClick);
+      previewEl.addEventListener("click", onContentImageClick);
+      previewEl.addEventListener("click", onContentDiagramClick);
+      previewEl.addEventListener("click", onContentLinkClick);
+      previewEl.addEventListener("mousedown", function (e) {
+        if (e.target.closest && e.target.closest("img")) selectImage(e.target.closest("img"));
+      });
+    }
 
     // 窗口控制（拖动 / 双击最大化由 setupWindowDrag 处理）
     $("winMin").addEventListener("click", function () { var a = api(); if (a) a.win_minimize(); });
     $("winMax").addEventListener("click", function () { var a = api(); if (a && a.win_toggle_maximize) a.win_toggle_maximize(); });
-    $("winClose").addEventListener("click", function () { var a = api(); if (a) a.win_close(); });
+    $("winClose").addEventListener("click", function () {
+      if (editMode && editDirty && !window.confirm("有未保存的修改，确定关闭？")) return;
+      var a = api(); if (a) a.win_close();
+    });
 
     // 搜索栏
     searchInput.addEventListener("input", function () {
@@ -1532,6 +2194,32 @@
     // 快捷键
     document.addEventListener("keydown", function (e) {
       var ctrl = e.ctrlKey || e.metaKey;
+      // 编辑器内的 Ctrl+S / Tab 由 textarea 自己处理；此处拦截全局
+      if (ctrl && (e.key === "e" || e.key === "E")) {
+        e.preventDefault();
+        toggleEditMode();
+        return;
+      }
+      if (ctrl && (e.key === "s" || e.key === "S")) {
+        if (editMode) { e.preventDefault(); saveEdit(); }
+        return;
+      }
+      if (editMode && ctrl && e.shiftKey && (e.key === "p" || e.key === "P")) {
+        e.preventDefault();
+        runEditPreview({ fromButton: true });
+        return;
+      }
+      if (editMode && e.key === "Escape") {
+        if (imageViewer && imageViewer.classList.contains("open")) { closeImageViewer(); return; }
+        // Esc：未脏直接退出；脏则提示
+        e.preventDefault();
+        exitEditMode();
+        return;
+      }
+      if (editMode) {
+        // 编辑态屏蔽阅读向快捷键（搜索 / 目录切换仍允许）
+        if (ctrl && (e.key === "f" || e.key === "F")) { e.preventDefault(); return; }
+      }
       if (ctrl && (e.key === "f" || e.key === "F")) { e.preventDefault(); openSearch(); }
       else if (ctrl && (e.key === "b" || e.key === "B")) { e.preventDefault(); toggleSidebar(); }
       else if (ctrl && (e.key === "o" || e.key === "O")) { e.preventDefault(); openFileDialog(); }
@@ -1618,6 +2306,24 @@
       state: function () {
         return { index: navIndex, len: navHistory.length, path: currentPath,
                  title: (docTitle && docTitle.textContent) || "" };
+      }
+    },
+    edit: {
+      enter: enterEditMode, exit: function () { exitEditMode({ force: true }); },
+      toggle: toggleEditMode, save: saveEdit,
+      findImageAt: findImageAt, findProtectedRanges: findProtectedRanges,
+      state: function () {
+        return {
+          mode: editMode, dirty: editDirty, path: editPath, mtime: editMtimeNs,
+          length: editorSource ? editorSource.value.length : 0,
+          baseline: editBaseline.length
+        };
+      },
+      getText: function () { return editorSource ? editorSource.value : ""; },
+      setText: function (t) {
+        if (!editorSource) return;
+        editorSource.value = t == null ? "" : String(t);
+        markDirtyFromEditor();
       }
     }
   };

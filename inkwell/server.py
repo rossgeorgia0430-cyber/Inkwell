@@ -107,7 +107,7 @@ def _host_allowed(host_header: str) -> bool:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "Inkwell/1.2.0"
+    server_version = "Inkwell/1.3.0"
 
     def log_message(self, *args):
         pass  # 静默

@@ -1,4 +1,4 @@
 """Inkwell — 原生 Markdown 阅读器。"""
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 APP_NAME = "Inkwell"

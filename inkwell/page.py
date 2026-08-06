@@ -41,6 +41,9 @@ _SHELL = """
         <svg viewBox="0 0 24 24" class="ico ico-sun"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
         <svg viewBox="0 0 24 24" class="ico ico-moon"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       </button>
+      <button class="icon-btn" id="editBtn" title="编辑模式 (Ctrl+E)" aria-label="编辑" aria-pressed="false">
+        <svg viewBox="0 0 24 24" class="ico"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      </button>
       <div class="win-controls">
         <button class="win-btn" id="winMin" title="最小化" aria-label="最小化"><svg viewBox="0 0 12 12"><path d="M2 6h8"/></svg></button>
         <button class="win-btn" id="winMax" title="最大化" aria-label="最大化"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7"/></svg></button>
@@ -57,6 +60,34 @@ _SHELL = """
     <main class="main" id="main">
       <div class="article-wrap" id="articleWrap">
         <article class="article" id="content">__CONTENT__</article>
+        <section class="editor-pane" id="editorPane" hidden aria-label="文档编辑器">
+          <div class="editor-toolbar" id="editorToolbar">
+            <div class="editor-toolbar-left">
+              <button type="button" class="edit-tool-btn" id="editSaveBtn" title="保存 (Ctrl+S)">保存</button>
+              <button type="button" class="edit-tool-btn" id="editPreviewBtn" title="刷新预览 (Ctrl+Shift+P)">预览</button>
+              <button type="button" class="edit-tool-btn" id="editInsertImageBtn" title="插入图片文件">插图</button>
+              <button type="button" class="edit-tool-btn" id="editEmbedImageBtn" title="内嵌图片 (data URI)">内嵌图</button>
+              <button type="button" class="edit-tool-btn" id="editDeleteImageBtn" title="删除光标处图片">删图</button>
+              <button type="button" class="edit-tool-btn" id="editInsertCodeBtn" title="插入代码块">代码</button>
+              <button type="button" class="edit-tool-btn" id="editInsertMermaidBtn" title="插入流程图">流程图</button>
+              <button type="button" class="edit-tool-btn" id="editInsertMathBtn" title="插入公式">公式</button>
+              <span class="editor-status" id="editorStatus" aria-live="polite"></span>
+            </div>
+            <div class="editor-toolbar-right">
+              <button type="button" class="edit-tool-btn ghost" id="editExitBtn" title="退出编辑 (Esc)">完成</button>
+            </div>
+          </div>
+          <div class="editor-split" id="editorSplit">
+            <div class="editor-source-wrap">
+              <label class="editor-pane-label" for="editorSource">Markdown 源码</label>
+              <textarea id="editorSource" class="editor-source" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" wrap="off" aria-label="Markdown 源码"></textarea>
+            </div>
+            <div class="editor-preview-wrap">
+              <div class="editor-pane-label">实时预览</div>
+              <div class="editor-preview article" id="editorPreview" tabindex="0"></div>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   </div>

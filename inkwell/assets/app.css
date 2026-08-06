@@ -724,3 +724,179 @@ mark.search-hit.current { background: var(--mark-current); color: #1c1300; }
 .image-viewer-stage.panning { cursor: grabbing; }
 .image-viewer-stage.panning * { pointer-events: none; }
 .image-zoom-hint { font-size: 11px; color: #8f8b81; padding: 0 6px 0 2px; user-select: none; }
+
+/* ============================================================
+   编辑模式：标题栏铅笔按钮 + 源码 / 预览分栏
+   ============================================================ */
+#editBtn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 阅读态隐藏编辑器；编辑态隐藏正文 article */
+body.edit-mode .article#content { display: none; }
+body.edit-mode .editor-pane { display: flex; }
+body.edit-mode .editor-pane[hidden] { display: none !important; }
+body:not(.edit-mode) .editor-pane { display: none !important; }
+body.edit-mode .main { overflow: hidden; }
+body.edit-mode .sidebar { opacity: .55; pointer-events: none; }
+body.edit-mode .tb-title.dirty::before {
+  content: "● ";
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.editor-pane {
+  display: none;
+  flex-direction: column;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  height: calc(100vh - var(--tb-h));
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+}
+
+.editor-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  user-select: none;
+}
+.editor-toolbar-left,
+.editor-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.editor-status {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28vw;
+}
+.editor-status.warn { color: #c47b2b; }
+.editor-status.ok { color: var(--accent); }
+
+.edit-tool-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--elevated);
+  color: var(--text-soft);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--speed), color var(--speed), border-color var(--speed);
+}
+.edit-tool-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.edit-tool-btn:active { transform: translateY(.5px); }
+.edit-tool-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.edit-tool-btn.ghost:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.edit-tool-btn.primary {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--accent-hover);
+}
+
+.editor-split {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+.editor-source-wrap,
+.editor-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.editor-source-wrap {
+  border-right: 1px solid var(--border);
+  background: var(--elevated);
+}
+.editor-pane-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 8px 14px 4px;
+}
+.editor-source {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 14px 24px;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+  caret-color: var(--accent);
+}
+.editor-source:focus {
+  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
+}
+.editor-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(16px, 2.2vw, 32px) clamp(14px, 2.2vw, 36px) 80px;
+  font-size: var(--reader-font);
+  line-height: 1.7;
+  color: var(--text);
+  word-wrap: break-word;
+  background: var(--bg);
+}
+/* 预览区复用 .article 排版；收紧首元素间距 */
+.editor-preview > :first-child { margin-top: 0; }
+
+/* 窄窗：上下分栏，源码在上预览在下 */
+@media (max-width: 900px) {
+  .editor-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .editor-source-wrap {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .editor-status { max-width: 40vw; }
+  .edit-tool-btn { padding: 0 8px; }
+}
