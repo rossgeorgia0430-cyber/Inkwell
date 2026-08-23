@@ -8,6 +8,33 @@
   var $ = function (id) { return document.getElementById(id); };
   var api = function () { return (window.pywebview && window.pywebview.api) || null; };
 
+  function isMacPlatform() {
+    var p = (window.__BOOT__ && window.__BOOT__.platform) || "";
+    if (p) return p === "darwin";
+    return /Mac|iPhone|iPad/.test(navigator.platform || "");
+  }
+  function formatModShortcut(spec) {
+    if (isMacPlatform()) {
+      return spec.replace(/^mod\+Shift\+/i, "⇧⌘").replace(/^mod\+/i, "⌘");
+    }
+    return spec.replace(/^mod/i, "Ctrl");
+  }
+  function applyShortcutTitles() {
+    var nodes = document.querySelectorAll("[data-shortcut]");
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var spec = el.getAttribute("data-shortcut") || "";
+      var label = el.getAttribute("aria-label") || (el.textContent || "").trim();
+      var hint = spec === "back"
+        ? (isMacPlatform() ? "⌘[" : "Alt+←")
+        : spec === "forward"
+          ? (isMacPlatform() ? "⌘]" : "Alt+→")
+          : formatModShortcut(spec);
+      if (label && hint) el.title = label.replace(/\s*\(.*\)$/, "") + " (" + hint + ")";
+      else if (hint) el.title = hint;
+    }
+  }
+
   var content, main, app, sidebar, toc, dragRegion, docTitle;
   var currentPath = null;
   var headings = [];
@@ -1218,6 +1245,7 @@
              nw: "topleft", ne: "topright", sw: "bottomleft", se: "bottomright" };
 
   function setupWindowResize() {
+    if (isMacPlatform()) return;
     Object.keys(RH).forEach(function (k) {
       var h = document.createElement("div");
       h.className = "resize-handle rh-" + k;
@@ -1233,6 +1261,9 @@
   function setupWindowDrag() {
     var bar = document.querySelector(".titlebar");
     if (!bar) return;
+    if (isMacPlatform() && dragRegion) {
+      dragRegion.classList.add("pywebview-drag-region");
+    }
     // 拖动：超过阈值才发起原生移动（否则单击/双击不被吞掉）
     bar.addEventListener("mousedown", function (e) {
       if (e.button !== 0) return;
@@ -1278,9 +1309,9 @@
     var saved = parseFloat(preferredFont);
     if (isNaN(saved)) saved = parseFloat(localStorage.getItem("inkwell-font"));
     if (!isNaN(saved)) setReaderFont(saved, false);
-    // Ctrl+滚轮：放大/缩小正文（拦截 WebView2 的整页缩放）
+    // Ctrl/⌘+滚轮：放大/缩小正文（拦截 WebView 的整页缩放）
     window.addEventListener("wheel", function (e) {
-      if (!e.ctrlKey) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       if (imageViewerIsOpen()) {
         zoomImageViewerByWheel(e.deltaY, e.clientX, e.clientY);
@@ -1377,8 +1408,8 @@
       btn.classList.toggle("active", editMode);
       btn.setAttribute("aria-pressed", editMode ? "true" : "false");
       btn.title = editMode
-        ? (editDirty ? "退出编辑（有未保存更改）" : "退出编辑模式 (Ctrl+E)")
-        : "编辑模式 (Ctrl+E)";
+        ? (editDirty ? "退出编辑（有未保存更改）" : "退出编辑模式 (" + formatModShortcut("mod+E") + ")")
+        : "编辑模式 (" + formatModShortcut("mod+E") + ")";
     }
     var saveBtn = $("editSaveBtn");
     if (saveBtn) saveBtn.classList.toggle("primary", editDirty);
@@ -3090,6 +3121,13 @@
   }
   window.__applyInitialPayload = applyInitialPayload;
 
+  // Finder / Open With：切到那篇文档。不能走 __applyPayload（热重载要求 path
+  // 已是当前文件），也不能走 __applyInitialPayload（欢迎页之后会被丢掉）。
+  window.__openFromFinder = function (p) {
+    if (!p || p.cancelled || (p.ok === false && !p.content)) return;
+    navTo(p, "");
+  };
+
   // ============================================================
   // 绑定与启动
   // ============================================================
@@ -3194,6 +3232,8 @@
       if (ctrl && (e.key === "f" || e.key === "F")) { e.preventDefault(); openSearch(); }
       else if (ctrl && (e.key === "b" || e.key === "B")) { e.preventDefault(); toggleSidebar(); }
       else if (ctrl && (e.key === "o" || e.key === "O")) { e.preventDefault(); openFileDialog(); }
+      else if (ctrl && e.key === "[") { e.preventDefault(); navBack(); }
+      else if (ctrl && e.key === "]") { e.preventDefault(); navForward(); }
       else if (e.altKey && e.key === "ArrowLeft") { e.preventDefault(); navBack(); }
       else if (e.altKey && e.key === "ArrowRight") { e.preventDefault(); navForward(); }
       else if (e.key === "Escape") {
@@ -3228,6 +3268,8 @@
       navIndex = 0;
     }
 
+    if (isMacPlatform()) document.documentElement.classList.add("platform-mac");
+    applyShortcutTitles();
     bind();
     setupResizer();
     setupWindowResize();
@@ -3236,6 +3278,40 @@
     onResize();
     initContent();
     updateNavButtons();
+
+    function hasInitialLoading() {
+      return !!(content && content.querySelector && content.querySelector(".initial-loading"));
+    }
+    function pullInitialFromPython() {
+      if (!hasInitialLoading()) return;
+      var a = api();
+      if (!a || !a.pull_initial) {
+        setTimeout(pullInitialFromPython, 120);
+        return;
+      }
+      Promise.resolve(a.pull_initial()).then(function (p) {
+        applyInitialPayload(p);
+      }).catch(function () {
+        if (hasInitialLoading()) setTimeout(pullInitialFromPython, 250);
+      });
+    }
+    window.addEventListener("pywebviewready", pullInitialFromPython);
+    pullInitialFromPython();
+    setTimeout(pullInitialFromPython, 400);
+    setTimeout(pullInitialFromPython, 1500);
+
+    if (!window.katex) {
+      var katexTries = 0;
+      var katexTimer = setInterval(function () {
+        katexTries += 1;
+        if (window.katex) {
+          clearInterval(katexTimer);
+          if (content) renderMath(content);
+        } else if (katexTries > 80) {
+          clearInterval(katexTimer);
+        }
+      }, 50);
+    }
   }
 
   // 测试钩子（无害；供自动化探针验证净化/渲染/高亮）

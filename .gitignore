@@ -2,6 +2,7 @@
 /build/
 /dist/
 /release/
+/Inkwell.app
 
 # Python 缓存与编译产物
 __pycache__/

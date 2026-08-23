@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Inkwell - 应用入口（pywebview / WebView2 原生窗口）
-- 无边框窗口 + 自定义标题栏（拖拽区用 .pywebview-drag-region）
+Inkwell - 应用入口（pywebview 原生窗口）
+- 无边框窗口 + 自定义标题栏（Windows: Win32/WebView2；macOS: Cocoa/WKWebView）
 - 内置服务器提供页面与资源；窗口加载 http://127.0.0.1:<port>/
 - js_api 桥：打开文件、渲染、窗口控制
 - 文件监视：源文件 mtime 变化时自动刷新正文
@@ -20,7 +20,6 @@ if sys.stdout is None or sys.stderr is None:
 
 import json
 import html as html_module
-import io
 import importlib
 import re
 import shutil
@@ -56,107 +55,20 @@ _IMAGE_MIME = {
     ".ico": "image/x-icon", ".avif": "image/avif",
 }
 
-import ctypes
-from ctypes import wintypes
-
 import webview
 
 from . import server as _server
 from .page import build_page
 from . import APP_NAME, __version__
+from .host import (
+    IS_MACOS,
+    app_data_dir,
+    copy_image_to_clipboard,
+    create_window_backend,
+    open_local_file,
+    webview_gui,
+)
 
-
-# ---------------------------------------------------------------------------
-# 原生窗口行为（Win32）：给无边框窗口「永久」加上 WS_THICKFRAME|WS_MAXIMIZEBOX，
-# 启用原生 8 向缩放 + Aero Snap 并列 + 拖回还原；同时用 ctypes 子类化窗口过程，在
-# WM_NCCALCSIZE 返回 0，让客户区铺满整个窗口矩形——这样无边框窗口在拖动/缩放时
-# 不会冒出系统画的非客户区缩放边框（之前临时加 WS_THICKFRAME 会闪一圈白边，且反复
-# 增删样式偶发丢边框）。pythonnet 覆写 Form.WndProc 不生效，但裸 Win32 子类化
-# （SetWindowLongPtr(GWLP_WNDPROC)）完全可用。所有安装/手势调用须在 UI 线程执行。
-# ---------------------------------------------------------------------------
-_user32 = ctypes.windll.user32
-_WM_NCLBUTTONDOWN = 0x00A1
-_WM_NCCALCSIZE = 0x0083
-_WM_GETMINMAXINFO = 0x0024
-_GWLP_WNDPROC = -4
-_HTCAPTION = 2
-_RESIZE_HT = {
-    'left': 10, 'right': 11, 'top': 12, 'topleft': 13, 'topright': 14,
-    'bottom': 15, 'bottomleft': 16, 'bottomright': 17,
-}
-_GWL_STYLE = -16
-_WS_THICKFRAME = 0x00040000      # = WS_SIZEBOX：启用原生缩放 + Snap 资格
-_WS_MAXIMIZEBOX = 0x00010000     # Snap 布局/拖动最大化所需
-_SWP_FRAMECHANGED = 0x0020
-_SWP_NOMOVE = 0x0002
-_SWP_NOSIZE = 0x0001
-_SWP_NOZORDER = 0x0004
-_SWP_NOACTIVATE = 0x0010
-_DWMWA_WINDOW_CORNER_PREFERENCE = 33
-_DWMWA_BORDER_COLOR = 34
-_DWMWCP_DEFAULT = 0
-_DWMWCP_DONOTROUND = 1
-_DWMWA_COLOR_DEFAULT = 0xFFFFFFFF
-_DWMWA_COLOR_NONE = 0xFFFFFFFE
-_MONITOR_DEFAULTTONEAREST = 0x00000002
-_CF_DIB = 8
-_GMEM_MOVEABLE = 0x0002
-
-
-class _MINMAXINFO(ctypes.Structure):
-    _fields_ = [
-        ("ptReserved", wintypes.POINT),
-        ("ptMaxSize", wintypes.POINT),
-        ("ptMaxPosition", wintypes.POINT),
-        ("ptMinTrackSize", wintypes.POINT),
-        ("ptMaxTrackSize", wintypes.POINT),
-    ]
-
-
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", wintypes.DWORD),
-        ("rcMonitor", wintypes.RECT),
-        ("rcWork", wintypes.RECT),
-        ("dwFlags", wintypes.DWORD),
-    ]
-
-_user32.ReleaseCapture.restype = wintypes.BOOL
-_user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-_user32.SendMessageW.restype = wintypes.LPARAM
-_user32.IsZoomed.argtypes = [wintypes.HWND]
-_user32.IsZoomed.restype = wintypes.BOOL
-_user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
-_user32.MonitorFromWindow.restype = wintypes.HANDLE
-_user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_MONITORINFO)]
-_user32.GetMonitorInfoW.restype = wintypes.BOOL
-_user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-                                 ctypes.c_int, ctypes.c_int, wintypes.UINT]
-# 64 位用 *Ptr 变体避免 WS_POPUP(0x80000000) 的有符号溢出；32 位回退到 W 变体
-if ctypes.sizeof(ctypes.c_void_p) == 8 and hasattr(_user32, 'GetWindowLongPtrW'):
-    _GetStyle, _SetStyle = _user32.GetWindowLongPtrW, _user32.SetWindowLongPtrW
-    _GetStyle.argtypes = [wintypes.HWND, ctypes.c_int]; _GetStyle.restype = ctypes.c_ssize_t
-    _SetStyle.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]; _SetStyle.restype = ctypes.c_ssize_t
-else:
-    _GetStyle, _SetStyle = _user32.GetWindowLongW, _user32.SetWindowLongW
-    _GetStyle.argtypes = [wintypes.HWND, ctypes.c_int]; _GetStyle.restype = wintypes.LONG
-    _SetStyle.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LONG]; _SetStyle.restype = wintypes.LONG
-
-# 子类化窗口过程所需：WNDPROC 回调原型 + CallWindowProc + SetWindowLongPtr(GWLP_WNDPROC)
-_WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
-                              ctypes.c_size_t, ctypes.c_ssize_t)
-_user32.CallWindowProcW.restype = ctypes.c_ssize_t
-_user32.CallWindowProcW.argtypes = [ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
-                                    ctypes.c_size_t, ctypes.c_ssize_t]
-if ctypes.sizeof(ctypes.c_void_p) == 8 and hasattr(_user32, 'SetWindowLongPtrW'):
-    _SetWndProc = _user32.SetWindowLongPtrW
-else:
-    _SetWndProc = _user32.SetWindowLongW
-_SetWndProc.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
-_SetWndProc.restype = ctypes.c_ssize_t
-
-# 子类化回调必须保活，否则 trampoline 被 GC 后窗口收到消息即崩溃。
-_WNDPROC_REFS = []
 _RENDER_MODULE = None
 
 
@@ -194,210 +106,35 @@ def _image_asset_path_for_copy(source):
         return None
 
 
-def _write_dib_to_clipboard(dib):
-    """写入标准 CF_DIB。成功后 Windows 接管 GlobalAlloc 的内存所有权。"""
-    if not dib:
-        raise ValueError("图片数据为空")
-    kernel32 = ctypes.windll.kernel32
-    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
-    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
-    kernel32.GlobalLock.restype = ctypes.c_void_p
-    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
-    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
-    kernel32.GlobalFree.restype = wintypes.HGLOBAL
-    _user32.OpenClipboard.argtypes = [wintypes.HWND]
-    _user32.OpenClipboard.restype = wintypes.BOOL
-    _user32.EmptyClipboard.restype = wintypes.BOOL
-    _user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
-    _user32.SetClipboardData.restype = wintypes.HANDLE
-    _user32.CloseClipboard.restype = wintypes.BOOL
-
-    handle = kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(dib))
-    if not handle:
-        raise OSError("无法分配剪贴板内存")
-    try:
-        ptr = kernel32.GlobalLock(handle)
-        if not ptr:
-            raise OSError("无法锁定剪贴板内存")
-        try:
-            ctypes.memmove(ptr, dib, len(dib))
-        finally:
-            kernel32.GlobalUnlock(handle)
-
-        # 其他应用可能瞬时占用剪贴板；短暂重试可避免偶发复制失败。
-        opened = False
-        for _ in range(12):
-            if _user32.OpenClipboard(None):
-                opened = True
-                break
-            time.sleep(0.025)
-        if not opened:
-            raise OSError("剪贴板正被其他应用占用")
-        try:
-            if not _user32.EmptyClipboard():
-                raise OSError("无法清空剪贴板")
-            if not _user32.SetClipboardData(_CF_DIB, handle):
-                raise OSError("无法写入图片到剪贴板")
-            handle = None  # SetClipboardData 成功后由系统释放。
-        finally:
-            _user32.CloseClipboard()
-    finally:
-        if handle:
-            kernel32.GlobalFree(handle)
-
-
-def _image_asset_to_dib(path):
-    """将本地化图片编码为通用 24-bit DIB（不触碰系统剪贴板）。"""
-    try:
-        try:
-            # 开发环境通常有 Pillow；放在调用点导入，避免拖慢每次应用启动。
-            from PIL import Image
-            with Image.open(path) as raw:
-                raw.load()
-                if "A" in raw.getbands() or (raw.mode == "P" and "transparency" in raw.info):
-                    rgba = raw.convert("RGBA")
-                    image = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-                    image.alpha_composite(rgba)
-                    image = image.convert("RGB")
-                else:
-                    image = raw.convert("RGB")
-                output = io.BytesIO()
-                image.save(output, format="BMP")
-                bmp = output.getvalue()
-        except ImportError:
-            # 安装包为启动速度/体积排除了 Pillow；按需复用 pywebview 已携带的
-            # System.Drawing，把图片合成到 24-bit 白底位图后再写 CF_DIB。
-            from System.Drawing import Bitmap, Color, Graphics
-            from System.Drawing.Imaging import ImageFormat, PixelFormat
-            from System.IO import MemoryStream
-            source = Bitmap(str(path))
-            bitmap = Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
-            graphics = Graphics.FromImage(bitmap)
-            stream = MemoryStream()
-            try:
-                graphics.Clear(Color.White)
-                graphics.DrawImage(source, 0, 0, source.Width, source.Height)
-                bitmap.Save(stream, ImageFormat.Bmp)
-                bmp = bytes(stream.ToArray())
-            finally:
-                stream.Dispose()
-                graphics.Dispose()
-                bitmap.Dispose()
-                source.Dispose()
-        # BMP 文件头不属于 CF_DIB；Windows 剪贴板只接受后续的 DIB 数据。
-        if len(bmp) <= 14 or bmp[:2] != b"BM":
-            raise ValueError("无法生成有效图片数据")
-        return bmp[14:]
-    except Exception as exc:
-        raise RuntimeError(f"复制图片失败：{exc}") from exc
-
-
-def _copy_asset_image_to_clipboard(path):
-    """将本地化图片写入 Windows 剪贴板，供 Word、飞书等程序直接粘贴。"""
-    _write_dib_to_clipboard(_image_asset_to_dib(path))
-
-
-def _monitor_rects_for_window(hwnd):
-    """Return (monitor_rect, work_rect) for the monitor nearest to hwnd."""
-    monitor = _user32.MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST)
-    if not monitor:
-        return None
-    info = _MONITORINFO()
-    info.cbSize = ctypes.sizeof(_MONITORINFO)
-    if not _user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-        return None
-    return info.rcMonitor, info.rcWork
-
-
-def _apply_minmax_for_current_monitor(hwnd, lparam):
-    """Apply monitor-relative maximize bounds for WM_GETMINMAXINFO."""
-    rects = _monitor_rects_for_window(hwnd)
-    if not rects:
-        return False
-    monitor, work = rects
-    info = ctypes.cast(lparam, ctypes.POINTER(_MINMAXINFO)).contents
-    info.ptMaxPosition.x = work.left - monitor.left
-    info.ptMaxPosition.y = work.top - monitor.top
-    info.ptMaxSize.x = work.right - work.left
-    info.ptMaxSize.y = work.bottom - work.top
-    return True
-
-
-def _apply_window_style(hwnd, style):
-    """写入完整窗口样式并让 Win32 立即重算非客户区。"""
-    try:
-        if _GetStyle(hwnd, _GWL_STYLE) == style:
-            return
-        _SetStyle(hwnd, _GWL_STYLE, style)
-        _user32.SetWindowPos(hwnd, None, 0, 0, 0, 0,
-                             _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_FRAMECHANGED)
-    except Exception:
-        pass
-
-
-def _install_native_chrome(hwnd):
-    """一次性：子类化窗口过程（WM_NCCALCSIZE→0，客户区铺满整窗、无可见缩放边框），
-    并永久加上 WS_THICKFRAME|WS_MAXIMIZEBOX（原生 8 向缩放 + Aero Snap）。
-    须在拥有该窗口的 UI 线程调用一次。"""
-    old_proc = [0]
-
-    @_WNDPROC
-    def _proc(h, msg, wparam, lparam):
-        if msg == _WM_GETMINMAXINFO and lparam:
-            result = _user32.CallWindowProcW(old_proc[0], h, msg, wparam, lparam)
-            _apply_minmax_for_current_monitor(h, lparam)
-            return result
-        # 移除全部非客户区：无边框窗口因此不会显示系统的缩放边框/内缩白边。
-        if msg == _WM_NCCALCSIZE and wparam:
-            return 0
-        return _user32.CallWindowProcW(old_proc[0], h, msg, wparam, lparam)
-
-    # 先登记旧过程，再切换——SetWindowPos(FRAMECHANGED) 会同步回调 _proc。
-    old_proc[0] = _SetWndProc(hwnd, _GWLP_WNDPROC, ctypes.cast(_proc, ctypes.c_void_p).value)
-    _WNDPROC_REFS.append(_proc)            # 保活
-    style = _GetStyle(hwnd, _GWL_STYLE)
-    _apply_window_style(hwnd, style | _WS_THICKFRAME | _WS_MAXIMIZEBOX)
-
-
-def _set_native_frame_visual(hwnd, maximized):
-    """最大化时关闭 DWM 圆角和描边，还原时交回系统默认策略。"""
-    try:
-        dwm = ctypes.windll.dwmapi.DwmSetWindowAttribute
-        dwm.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
-        dwm.restype = ctypes.c_long
-        corner = ctypes.c_int(_DWMWCP_DONOTROUND if maximized else _DWMWCP_DEFAULT)
-        border = ctypes.c_uint32(_DWMWA_COLOR_NONE if maximized else _DWMWA_COLOR_DEFAULT)
-        dwm(hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(corner), ctypes.sizeof(corner))
-        dwm(hwnd, _DWMWA_BORDER_COLOR, ctypes.byref(border), ctypes.sizeof(border))
-    except Exception:
-        # Windows 10 等旧系统不支持这些 Windows 11 DWM 属性，保持原行为即可。
-        pass
-
-
-WELCOME_MD = """# 欢迎使用 Inkwell
+def _welcome_md():
+    mod = "⌘" if IS_MACOS else "Ctrl"
+    copy_mod = "⌘" if IS_MACOS else "Ctrl"
+    return f"""# 欢迎使用 Inkwell
 
 这是一个本地运行的 **Markdown 阅读器**。
 
 - 点击左上角 **目录** 按钮可折叠/展开侧栏
-- 按 **Ctrl+F** 搜索，**Ctrl+B** 切换目录，**Ctrl+O** 打开文件
+- 按 **{mod}+F** 搜索，**{mod}+B** 切换目录，**{mod}+O** 打开文件
 - 右上角可切换 **浅色 / 深色** 主题
 - 代码块里 **双击**任意标识符会高亮同名 token
 - 选中文字复制到飞书等文档**不会带底色和彩色**；公式可直接复制为 LaTeX
-- 点击图片会按当前窗口自适应放大；底部按钮或 **Ctrl+滚轮** 可继续缩放
-- 图片右上角可复制，选中后按 **Ctrl+C** 也可直接复制
+- 点击图片会按当前窗口自适应放大；底部按钮或 **{mod}+滚轮** 可继续缩放
+- 图片右上角可复制，选中后按 **{copy_mod}+C** 也可直接复制
 
 > 用「打开文件」按钮选择一个 `.md` 文件开始，或直接双击任意 Markdown 文件。
 
 ```python
 def hello(name: str) -> str:
-    return f"Hello, {name}!"
+    return f"Hello, {{name}}!"
 ```
 
 行内公式 $E = mc^2$，块级公式：
 
-$$\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}$$
+$$\\int_{{-\\infty}}^{{\\infty}} e^{{-x^2}}\\,dx = \\sqrt{{\\pi}}$$
 """
+
+
+WELCOME_MD = _welcome_md()
 
 
 def _document_path(path) -> Path:
@@ -520,8 +257,7 @@ def _md_image_markdown(alt: str, dest: str) -> str:
 
 
 def _settings_path() -> Path:
-    root = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Inkwell"
-    return root / "settings.json"
+    return app_data_dir() / "settings.json"
 
 
 def _load_preferences():
@@ -551,23 +287,94 @@ def _save_preferences(preferences):
     os.replace(tmp, path)
 
 
+def _ensure_loopback_noproxy():
+    """Keep 127.0.0.1 off HTTP/SOCKS proxies (Clash mixed-port 403s loopback)."""
+    extra = ("127.0.0.1", "localhost", "::1")
+    for key in ("NO_PROXY", "no_proxy"):
+        cur = os.environ.get(key, "")
+        parts = [p.strip() for p in cur.split(",") if p.strip()]
+        for item in extra:
+            if item not in parts:
+                parts.append(item)
+        os.environ[key] = ",".join(parts)
+
+
+def _js_call(fn_name, payload):
+    blob = json.dumps(payload, ensure_ascii=False)
+    blob = (blob.replace("\u2028", "\\u2028")
+                .replace("\u2029", "\\u2029")
+                .replace("</", "<\\/"))
+    return "window.%s(%s)" % (fn_name, blob)
+
+
+def _inject_js(window, js):
+    """Push JS without pywebview's eval() wrapper (blocked by WKWebView CSP).
+
+    On macOS, pywebview's run_js/evaluate_js wait on a semaphore after
+    scheduling work on the Cocoa main thread. Calling that from the main
+    thread deadlocks AppKit (the window beachballs / 'not responding').
+    """
+    if window is None:
+        return
+    if IS_MACOS:
+        from .host_mac import evaluate_js_async, is_exiting, run_off_main
+        if is_exiting():
+            return
+        if evaluate_js_async(window, js):
+            return
+
+        def _fallback():
+            try:
+                run_js = getattr(window, "run_js", None)
+                if callable(run_js):
+                    run_js(js)
+                    return
+            except Exception:
+                if os.environ.get("INKWELL_DEBUG") == "1":
+                    traceback.print_exc()
+            try:
+                window.evaluate_js(js)
+            except Exception:
+                if os.environ.get("INKWELL_DEBUG") == "1":
+                    traceback.print_exc()
+
+        run_off_main(_fallback, name="InkwellInjectJS")
+        return
+    try:
+        run_js = getattr(window, "run_js", None)
+        if callable(run_js):
+            run_js(js)
+            return
+    except Exception:
+        if os.environ.get("INKWELL_DEBUG") == "1":
+            traceback.print_exc()
+    try:
+        window.evaluate_js(js)
+    except Exception:
+        if os.environ.get("INKWELL_DEBUG") == "1":
+            traceback.print_exc()
+
+
 class Api:
     """暴露给前端 window.pywebview.api 的方法。"""
 
     def __init__(self):
         self._window = None
         self.current_file = None
-        self._maximized = None
-        self._native_state_handler = None
-        self._chrome_installed = False
-        self._normal_size = None
+        self._backend = create_window_backend(self)
         self._mtime = None
         self._encoding = "utf-8"
         self._encoding_hint = None  # (path, encoding) from last successful read/render
         self._watch_paused = False
         self._save_lock = threading.RLock()
         self._state_lock = threading.RLock()
+        self._load_lock = threading.Lock()
         self.preferences = _load_preferences()
+        self._init_path = None
+        self._pending_mac_files = []
+        self._initial_payload = None
+        self._open_seq = 0
+        self._closing = False
 
     def _remember_encoding(self, path, encoding):
         with self._state_lock:
@@ -620,6 +427,10 @@ class Api:
                 hint = self._encoding_hint
                 if hint and os.path.normcase(hint[0]) == os.path.normcase(resolved_s):
                     self._encoding = hint[1]
+            try:
+                self._backend.set_represented_file(resolved_s)
+            except Exception:
+                pass
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -765,6 +576,8 @@ class Api:
 
     def save_document_as(self, text):
         """另存为：弹出保存对话框后写入并切换活动文档。"""
+        if getattr(self, "_closing", False):
+            return {"ok": False, "cancelled": True}
         try:
             if text is None:
                 text = ""
@@ -820,6 +633,8 @@ class Api:
           - file（默认）：复制到文档旁 images/ 目录，返回相对路径语法
           - embed：以 data URI 内嵌（注意体积；适合单文件分发）
         """
+        if getattr(self, "_closing", False):
+            return {"ok": False, "cancelled": True}
         try:
             if not self.current_file:
                 return {"ok": False, "error": "请先打开一个文档再插入图片"}
@@ -929,6 +744,8 @@ class Api:
 
     def open_dialog(self):
         """弹系统文件选择框，选中后渲染并返回 payload。"""
+        if getattr(self, "_closing", False):
+            return {"ok": False, "cancelled": True}
         try:
             result = self._file_dialog(
                 "OPEN",
@@ -998,7 +815,7 @@ class Api:
             abspath, _ = self._resolve_local(href)
             if abspath and os.path.isfile(abspath):
                 if Path(abspath).suffix.lower() in _SAFE_OPEN_EXTS:
-                    os.startfile(abspath)            # noqa (Windows)
+                    open_local_file(abspath)
                     return {"ok": True}
                 return {"ok": False, "error": "出于安全考虑未打开该类型文件：%s" % abspath}
             return {"ok": False, "error": "无法打开：%s" % href}
@@ -1007,11 +824,13 @@ class Api:
 
     def copy_image(self, source):
         """前端 Clipboard API 不可用时，复制本进程已本地化的图片资源。"""
+        if getattr(self, "_closing", False):
+            return {"ok": False, "error": "正在退出"}
         path = _image_asset_path_for_copy(source)
         if path is None:
             return {"ok": False, "error": "仅能复制当前文档中的本地或内嵌图片"}
         try:
-            _copy_asset_image_to_clipboard(path)
+            copy_image_to_clipboard(path)
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -1020,155 +839,84 @@ class Api:
         return {"name": APP_NAME, "version": __version__,
                 "path": self.current_file,
                 "title": Path(self.current_file).name if self.current_file else APP_NAME,
-                "preferences": dict(self.preferences)}
+                "preferences": dict(self.preferences),
+                "platform": sys.platform}
 
-    # ---- 窗口控制 ----
+    def _build_startup_payload(self):
+        with self._state_lock:
+            cached = self._initial_payload
+        if cached is not None:
+            return cached
+        path = self._init_path
+        pending = self._pending_mac_files
+        if not path and pending:
+            path = pending[-1]
+            pending.clear()
+        if path:
+            payload = self._render_payload(path)
+        else:
+            try:
+                rendered, rendered_toc = _get_render().render_markdown(
+                    WELCOME_MD, base_dir=str(Path.cwd()))
+                payload = {"ok": True, "title": APP_NAME,
+                           "content": rendered, "toc": rendered_toc, "path": ""}
+            except Exception as exc:
+                error = html_module.escape(str(exc))
+                payload = {"ok": False, "title": "错误",
+                           "content": f"<h1>无法打开欢迎页</h1><pre>{error}</pre>", "toc": ""}
+        with self._state_lock:
+            self._initial_payload = payload
+        return payload
+
+    def pull_initial(self):
+        """前端在 pywebviewready 后拉取首屏；WKWebView 上 evaluate_js/eval 可能被 CSP 拦住。"""
+        if getattr(self, "_closing", False):
+            return {"ok": False, "cancelled": True}
+        return self._build_startup_payload()
+
+    # ---- 窗口控制（Windows: Win32 无边框缩放/Snap；macOS: Cocoa NSWindow）----
     def win_minimize(self):
         try:
             self._window.minimize()
         except Exception:
             pass
 
-    def _apply_maximized_bounds(self):
-        """把窗体 MaximizedBounds 设为「当前显示器」的工作区（排除任务栏）。
-        无边框窗体（FormBorderStyle.None）在高 DPI 缩放显示器上，WinForms 默认算出的
-        最大化尺寸会出错——典型表现就是「只铺到半截屏 / 盖住任务栏」。显式给定
-        MaximizedBounds 后，由 WM_GETMINMAXINFO 强制最大化为精确的工作区矩形。
-        必须在 UI 线程调用（WinForms 属性跨线程赋值会抛异常）。"""
-        try:
-            from System.Drawing import Rectangle
-            form = self._window.native
-            rects = _monitor_rects_for_window(self._hwnd())
-            if not rects:
-                return
-            _monitor, work = rects
-            form.MaximizedBounds = Rectangle(
-                work.left,
-                work.top,
-                work.right - work.left,
-                work.bottom - work.top,
-            )
-        except Exception:
-            pass
-
     def win_toggle_maximize(self):
-        # 最大化 / 还原。最大化前按「当前显示器」工作区设定 MaximizedBounds，
-        # 确保铺满整屏（高 DPI 下也不会只到半截），且不盖任务栏；保留原生 Snap / 拖回还原。
-        def fn():
-            try:
-                from System.Windows.Forms import FormWindowState
-                from System.Drawing import Size
-                form = self._window.native
-                if form.WindowState == FormWindowState.Maximized:
-                    form.WindowState = FormWindowState.Normal
-                    if self._normal_size:
-                        form.Size = Size(*self._normal_size)
-                else:
-                    self._normal_size = (form.Width, form.Height)
-                    self._apply_maximized_bounds()
-                    form.WindowState = FormWindowState.Maximized
-            except Exception:
-                pass
-        self._ui_invoke(fn)
+        self._backend.toggle_maximize()
 
     def win_is_maximized(self):
-        """供前端同步最大化状态；使用 Win32 查询，避免跨线程读取 WinForms 属性。"""
         try:
-            return bool(_user32.IsZoomed(self._hwnd()))
+            return bool(self._backend.is_maximized())
         except Exception:
             return False
 
     def win_close(self):
+        self._closing = True
+        if IS_MACOS:
+            from .host_mac import schedule_window_close
+            schedule_window_close(self._window)
+            return
         try:
             self._window.destroy()
         except Exception:
             pass
 
-    # ---- 原生移动/缩放（ReleaseCapture + SendMessage，marshal 到 UI 线程）----
-    def _hwnd(self):
-        return self._window.native.Handle.ToInt32()
-
-    def _ui_invoke(self, fn):
-        """把调用异步派发到 WinForms UI 线程（SendMessage 模态循环会阻塞整个拖动）。"""
-        try:
-            from System import Action
-            self._window.native.BeginInvoke(Action(fn))
-        except Exception:
-            try:
-                fn()
-            except Exception:
-                pass
-
     def init_native_chrome(self):
-        """窗口显示后：永久安装原生缩放样式 + WM_NCCALCSIZE 子类化（一次），
-        并装好显示器/最大化状态同步。"""
-
-        def init_state_sync():
-            if not self._chrome_installed:
-                _install_native_chrome(self._hwnd())
-                self._chrome_installed = True
-            self._apply_maximized_bounds()
-            form = self._window.native
-
-            def sync_frame(*_):
-                maximized = self.win_is_maximized()
-                if not maximized:
-                    # 窗口移到另一块显示器后，下一次按钮或 Aero 最大化应使用新工作区。
-                    self._apply_maximized_bounds()
-                    self._normal_size = (form.Width, form.Height)
-                if maximized == self._maximized:
-                    return
-                self._maximized = maximized
-                _set_native_frame_visual(self._hwnd(), maximized)
-
-            if self._native_state_handler is None:
-                self._native_state_handler = sync_frame
-                form.SizeChanged += self._native_state_handler
-                form.LocationChanged += self._native_state_handler
-            sync_frame()
-
-        self._ui_invoke(init_state_sync)
+        self._backend.init_chrome()
 
     def win_native_drag(self):
-        """从自绘标题栏发起原生窗口移动 → 支持拖到屏幕边缘 Snap 并列 / 拖回还原。
-        样式已永久具备 WS_THICKFRAME，手势期间不再增删样式（避免闪白边/丢边框）。"""
-        hwnd = self._hwnd()
-
-        def fn():
-            from System.Drawing import Size
-            started_maximized = self.win_is_maximized()
-            if not started_maximized:
-                self._normal_size = (self._window.native.Width, self._window.native.Height)
-            _user32.ReleaseCapture()
-            _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)
-            if started_maximized and not self.win_is_maximized() and self._normal_size:
-                self._window.native.Size = Size(*self._normal_size)
-            elif not self.win_is_maximized():
-                self._normal_size = (self._window.native.Width, self._window.native.Height)
-            self._apply_maximized_bounds()
-
-        self._ui_invoke(fn)
+        self._backend.native_drag()
 
     def win_native_resize(self, edge):
-        """从边/角发起原生缩放（8 向，原生光标 + Snap 预览）。"""
-        code = _RESIZE_HT.get(edge)
-        if code is None:
-            return
-        hwnd = self._hwnd()
-
-        def fn():
-            _user32.ReleaseCapture()
-            _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, code, 0)
-            if not self.win_is_maximized():
-                self._normal_size = (self._window.native.Width, self._window.native.Height)
-
-        self._ui_invoke(fn)
+        self._backend.native_resize(edge)
 
 
 def _watch_file(api: Api):
     """后台轮询当前文件 mtime，变化时推送新内容到前端。"""
     while True:
         time.sleep(1.0)
+        if getattr(api, "_closing", False):
+            return
         with api._state_lock:
             path = api.current_file
             previous_mtime = api._mtime
@@ -1187,11 +935,7 @@ def _watch_file(api: Api):
                 if api.current_file != path or api._watch_paused:
                     continue
                 api._mtime = mt
-            try:
-                js = "window.__applyPayload(%s)" % json.dumps(payload, ensure_ascii=False)
-                api._window.evaluate_js(js)
-            except Exception:
-                pass
+            _inject_js(api._window, _js_call("__applyPayload", payload))
 
 
 def _initial_file(argv):
@@ -1205,9 +949,14 @@ def _initial_file(argv):
 
 
 def main():
+    _ensure_loopback_noproxy()
+    if IS_MACOS:
+        from .host_mac import configure_app_identity
+        configure_app_identity()
     api = Api()
 
     init_path = _initial_file(sys.argv)
+    api._init_path = init_path
     if init_path:
         title = Path(init_path).name
     else:
@@ -1224,12 +973,54 @@ def main():
                                 preferences=api.preferences))
     httpd, url = _server.start_server()
 
-    # WebView2 数据目录（cookies/localStorage 主题持久化）需可写
-    storage = os.path.join(os.environ.get("LOCALAPPDATA", str(Path.home())), "Inkwell", "webview")
+    storage = str(app_data_dir() / "webview")
     try:
         os.makedirs(storage, exist_ok=True)
     except Exception:
         storage = None
+
+    pending_mac_files = api._pending_mac_files
+    page_loaded = threading.Event()
+
+    def _open_from_finder(paths):
+        def work():
+            if getattr(api, "_closing", False):
+                return
+            chosen = None
+            for p in paths:
+                try:
+                    chosen = str(_document_path(p))
+                    break
+                except (OSError, ValueError):
+                    continue
+            if not chosen:
+                return
+            with api._state_lock:
+                api._init_path = chosen
+                api._initial_payload = None
+                api._open_seq += 1
+                seq = api._open_seq
+                window_ready = api._window is not None and page_loaded.is_set()
+                if not window_ready:
+                    if chosen not in pending_mac_files:
+                        pending_mac_files.append(chosen)
+                    return
+            with api._load_lock:
+                payload = api._render_payload(chosen)
+                with api._state_lock:
+                    if seq != api._open_seq:
+                        return
+                _inject_js(api._window, _js_call("__openFromFinder", payload))
+
+        if IS_MACOS:
+            from .host_mac import run_off_main
+            run_off_main(work, name="InkwellOpenFromFinder")
+        else:
+            work()
+
+    if IS_MACOS:
+        from .host_mac import install_open_file_handler
+        install_open_file_handler(_open_from_finder)
 
     window = webview.create_window(
         title=APP_NAME,
@@ -1253,48 +1044,92 @@ def main():
         if initial_render_started.is_set():
             return
         initial_render_started.set()
+        page_loaded.set()
 
         def work():
-            if init_path:
-                payload = api._render_payload(init_path)
-            else:
-                try:
-                    rendered, rendered_toc = _get_render().render_markdown(
-                        WELCOME_MD, base_dir=str(Path.cwd()))
-                    payload = {"ok": True, "title": APP_NAME,
-                               "content": rendered, "toc": rendered_toc, "path": ""}
-                except Exception as exc:
-                    error = html_module.escape(str(exc))
-                    payload = {"ok": False, "title": "错误",
-                               "content": f"<h1>无法打开欢迎页</h1><pre>{error}</pre>", "toc": ""}
-            try:
-                js = "window.__applyInitialPayload(%s)" % json.dumps(payload, ensure_ascii=False)
-                window.evaluate_js(js)
-            except Exception:
-                pass
+            if getattr(api, "_closing", False):
+                return
+            with api._load_lock:
+                payload = api._build_startup_payload()
+                _inject_js(window, _js_call("__applyInitialPayload", payload))
+                late = None
+                with api._state_lock:
+                    if api._pending_mac_files:
+                        late = api._pending_mac_files[-1]
+                        api._pending_mac_files.clear()
+                if late and payload.get("path") != late:
+                    _inject_js(window, _js_call("__openFromFinder", api._render_payload(late)))
 
         threading.Thread(target=work, name="InkwellInitialRender", daemon=True).start()
 
+    def _loaded_watchdog():
+        if initial_render_started.wait(2.5):
+            return
+        _begin_initial_render()
+
     watcher = threading.Thread(target=_watch_file, args=(api,), daemon=True)
     watcher.start()
+    threading.Thread(target=_loaded_watchdog, name="InkwellLoadedWatchdog",
+                     daemon=True).start()
 
     debug = os.environ.get("INKWELL_DEBUG") == "1"
 
     def _on_closed():
+        api._closing = True
+        if IS_MACOS:
+            from .host_mac import mark_exiting
+            mark_exiting()
         if _RENDER_MODULE is not None:
-            _RENDER_MODULE.cleanup_assets()
-        try:
-            httpd.shutdown()
-        except Exception:
-            pass
+            try:
+                _RENDER_MODULE.cleanup_assets()
+            except Exception:
+                pass
+
+        def stop_http():
+            try:
+                httpd.shutdown()
+            except Exception:
+                pass
+            try:
+                httpd.server_close()
+            except Exception:
+                pass
+
+        stopper = threading.Thread(target=stop_http, name="InkwellHttpShutdown",
+                                   daemon=True)
+        stopper.start()
+        stopper.join(1.5)
 
     window.events.closed += _on_closed
     window.events.loaded += _begin_initial_render
-    # 窗口显示后（UI 线程）开启原生缩放 + Snap
     window.events.shown += lambda *a: api.init_native_chrome()
 
-    webview.start(gui="edgechromium", debug=debug,
-                  private_mode=False, storage_path=storage)
+    close_after = os.environ.get("INKWELL_SELFTEST_CLOSE")
+    if close_after:
+        try:
+            delay = float(close_after)
+        except ValueError:
+            delay = 2.0
+
+        def _self_close():
+            time.sleep(max(0.2, delay))
+            try:
+                api.win_close()
+            except Exception:
+                pass
+
+        threading.Thread(target=_self_close, name="InkwellSelfTestClose",
+                         daemon=True).start()
+
+    start_kwargs = dict(debug=debug, private_mode=False, storage_path=storage)
+    gui = webview_gui()
+    if gui:
+        start_kwargs["gui"] = gui
+    if IS_MACOS:
+        icns = Path(__file__).resolve().parent / "assets" / "icon.icns"
+        if icns.is_file():
+            start_kwargs["icon"] = str(icns)
+    webview.start(**start_kwargs)
 
 
 if __name__ == "__main__":

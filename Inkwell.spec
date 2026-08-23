@@ -20,6 +20,7 @@ hiddenimports = [
     "markdown.extensions.attr_list",
     "pygments", "pygments.lexers", "pygments.formatters",
     "pygments.formatters.html", "pygments.styles",
+    "inkwell.host", "inkwell.host_win",
 ]
 
 # 收集 pywebview（含 lib/ 下的 WebView2 DLL 与注入 js）、pygments、markdown 的全部资源

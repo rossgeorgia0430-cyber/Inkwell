@@ -9,6 +9,7 @@ Inkwell - 页面组装
 import html as html_module
 import json
 import secrets
+import sys
 
 
 # 无边框标题栏 + 侧栏 + 正文 + 搜索覆盖层 的整体骨架
@@ -16,14 +17,14 @@ _SHELL = """
 <div class="window">
   <header class="titlebar">
     <div class="tb-cluster tb-left">
-      <button class="icon-btn" id="sidebarToggle" title="目录 (Ctrl+B)" aria-label="目录">
+      <button class="icon-btn" id="sidebarToggle" title="目录" aria-label="目录" data-shortcut="mod+B">
         <svg viewBox="0 0 24 24" class="ico"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
       <span class="brand">Inkwell</span>
-      <button class="icon-btn nav-btn" id="navBack" title="后退 (Alt+←)" aria-label="后退" disabled>
+      <button class="icon-btn nav-btn" id="navBack" title="后退" aria-label="后退" disabled data-shortcut="back">
         <svg viewBox="0 0 24 24" class="ico"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
-      <button class="icon-btn nav-btn" id="navForward" title="前进 (Alt+→)" aria-label="前进" disabled>
+      <button class="icon-btn nav-btn" id="navForward" title="前进" aria-label="前进" disabled data-shortcut="forward">
         <svg viewBox="0 0 24 24" class="ico"><path d="M9 6l6 6-6 6"/></svg>
       </button>
     </div>
@@ -31,17 +32,17 @@ _SHELL = """
       <span class="tb-title" id="docTitle"></span>
     </div>
     <div class="tb-cluster tb-right">
-      <button class="icon-btn" id="openBtn" title="打开文件 (Ctrl+O)" aria-label="打开">
+      <button class="icon-btn" id="openBtn" title="打开文件" aria-label="打开" data-shortcut="mod+O">
         <svg viewBox="0 0 24 24" class="ico"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
       </button>
-      <button class="icon-btn" id="searchBtn" title="搜索 (Ctrl+F)" aria-label="搜索">
+      <button class="icon-btn" id="searchBtn" title="搜索" aria-label="搜索" data-shortcut="mod+F">
         <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       </button>
       <button class="icon-btn" id="themeBtn" title="切换主题" aria-label="主题">
         <svg viewBox="0 0 24 24" class="ico ico-sun"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
         <svg viewBox="0 0 24 24" class="ico ico-moon"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       </button>
-      <button class="icon-btn" id="editBtn" title="编辑模式 (Ctrl+E)" aria-label="编辑" aria-pressed="false">
+      <button class="icon-btn" id="editBtn" title="编辑模式" aria-label="编辑" aria-pressed="false" data-shortcut="mod+E">
         <svg viewBox="0 0 24 24" class="ico"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
       </button>
       <div class="win-controls">
@@ -63,8 +64,8 @@ _SHELL = """
         <section class="editor-pane" id="editorPane" hidden aria-label="文档编辑器">
           <div class="editor-toolbar" id="editorToolbar">
             <div class="editor-toolbar-left">
-              <button type="button" class="edit-tool-btn" id="editSaveBtn" title="保存 (Ctrl+S)">保存</button>
-              <button type="button" class="edit-tool-btn" id="editRefreshBtn" title="刷新渲染 (Ctrl+Shift+P)">刷新</button>
+              <button type="button" class="edit-tool-btn" id="editSaveBtn" title="保存" data-shortcut="mod+S">保存</button>
+              <button type="button" class="edit-tool-btn" id="editRefreshBtn" title="刷新渲染" data-shortcut="mod+Shift+P">刷新</button>
               <button type="button" class="edit-tool-btn" id="editInsertImageBtn" title="插入图片文件">插图</button>
               <button type="button" class="edit-tool-btn" id="editEmbedImageBtn" title="内嵌图片 (data URI)">内嵌图</button>
               <button type="button" class="edit-tool-btn" id="editDeleteImageBtn" title="删除光标处图片">删图</button>
@@ -131,6 +132,7 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
         "title": title or "",
         "path": path or "",
         "preferences": preferences or {},
+        "platform": sys.platform,
     })
     nonce = secrets.token_urlsafe(18)
 
@@ -138,7 +140,7 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
 <html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'nonce-{nonce}' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
 <title>{safe_title}</title>
 <script nonce="{nonce}">window.__errors=[];window.addEventListener('error',function(e){{window.__errors.push((e.message||'')+' @'+(e.filename||'')+':'+(e.lineno||0));}});</script>
 <script nonce="{nonce}">window.__BOOT__ = {boot};</script>
@@ -161,7 +163,7 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
 </head>
 <body>
 {shell}
-<script src="/assets/katex/katex.min.js"></script>
 <script src="/assets/app.js"></script>
+<script src="/assets/katex/katex.min.js"></script>
 </body>
 </html>"""

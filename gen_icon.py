@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
-"""生成 Inkwell 应用图标（圆角蓝底 + 白色 markdown 风格标记），输出 inkwell/assets/icon.ico。"""
+"""生成 Inkwell 应用图标（圆角陶土底 + 白色 markdown 风格标记）。
+
+输出：
+  inkwell/assets/icon.ico   Windows
+  inkwell/assets/icon.png   通用 1024px
+  inkwell/assets/icon.icns  macOS（本机有 iconutil 时）
+"""
 import os
+import shutil
+import subprocess
+import sys
+import tempfile
 from PIL import Image, ImageDraw
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inkwell", "assets", "icon.ico")
+ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inkwell", "assets")
+OUT_ICO = os.path.join(ASSET_DIR, "icon.ico")
+OUT_PNG = os.path.join(ASSET_DIR, "icon.png")
+OUT_ICNS = os.path.join(ASSET_DIR, "icon.icns")
 
 
 def rounded(draw, box, r, fill):
@@ -59,11 +72,45 @@ def make(size):
     return img.resize((size, size), Image.LANCZOS)
 
 
+def write_icns(png_1024):
+    """用 macOS iconutil 从 1024 PNG 生成 .icns。"""
+    if sys.platform != "darwin" or not shutil.which("iconutil"):
+        return False
+    mapping = {
+        "icon_16x16.png": 16,
+        "icon_16x16@2x.png": 32,
+        "icon_32x32.png": 32,
+        "icon_32x32@2x.png": 64,
+        "icon_128x128.png": 128,
+        "icon_128x128@2x.png": 256,
+        "icon_256x256.png": 256,
+        "icon_256x256@2x.png": 512,
+        "icon_512x512.png": 512,
+        "icon_512x512@2x.png": 1024,
+    }
+    tmp = tempfile.mkdtemp(prefix="inkwell-iconset-")
+    iconset = os.path.join(tmp, "icon.iconset")
+    os.makedirs(iconset)
+    try:
+        for name, size in mapping.items():
+            png_1024.resize((size, size), Image.LANCZOS).save(os.path.join(iconset, name), format="PNG")
+        subprocess.run(["iconutil", "-c", "icns", iconset, "-o", OUT_ICNS], check=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return True
+
+
 def main():
+    os.makedirs(ASSET_DIR, exist_ok=True)
     sizes = [16, 24, 32, 48, 64, 128, 256]
     base = make(256)
-    base.save(OUT, format="ICO", sizes=[(s, s) for s in sizes])
-    print("wrote", OUT)
+    base.save(OUT_ICO, format="ICO", sizes=[(s, s) for s in sizes])
+    print("wrote", OUT_ICO)
+    png = make(1024)
+    png.save(OUT_PNG, format="PNG")
+    print("wrote", OUT_PNG)
+    if write_icns(png):
+        print("wrote", OUT_ICNS)
 
 
 if __name__ == "__main__":

@@ -677,6 +677,13 @@ mark.search-hit.current { background: var(--mark-current); color: #1c1300; }
 /* 最大化后窗口边缘由系统管理，避免透明手柄继续截获最外 4–9px 的点击/光标。 */
 .window-maximized .resize-handle { display: none; }
 
+/* macOS：系统字体 + 由 NSWindow 负责边缘缩放，不画 Win32 缩放手柄。 */
+html.platform-mac {
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Songti SC", sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, "JetBrains Mono", monospace;
+}
+html.platform-mac .resize-handle { display: none; }
+
 /* 后退/前进按钮：无历史时禁用 */
 .icon-btn:disabled { opacity: .3; cursor: default; pointer-events: none; }
 
