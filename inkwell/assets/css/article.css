@@ -113,12 +113,17 @@
   position: relative;
   background: transparent;
   border: none;
-  border-radius: var(--radius);
   margin: 0;
   overflow: hidden;
   font-family: var(--font-mono);
   font-size: .86em;
   line-height: 1.6;
+}
+/* border-radius 只挂在 .article pre（不带 .codehilite 前缀）上，优先级与
+   .code-block-wrapper pre 的归零规则打平，让后者按源码顺序压过——否则带文件名
+   头部的代码块（含 Mermaid 源码 pre）四角会漏出圆角。 */
+.article pre {
+  border-radius: var(--radius);
 }
 .article .codehilite pre {
   padding: 14px 16px;
