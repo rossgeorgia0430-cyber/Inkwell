@@ -1,6 +1,6 @@
 # Inkwell 渲染校验
 
-这是一段正文：行内代码 `(Retargeting L1)`、单字母 `I`、`A`，以及加粗行内代码 **`TArray<T>`** 和 `TObjectPtr<T>`。它们应当是**中性浅底、发丝边框、文字不发红**。
+这是一段正文：行内代码 `(Pipeline L1)`、单字母 `I`、`A`，以及加粗行内代码 **`TArray<T>`** 和 `TObjectPtr<T>`。它们应当是**中性浅底、发丝边框、文字不发红**。
 
 链接里的代码 [`FName`](https://example.com) 颜色应跟随链接。
 
@@ -8,7 +8,7 @@
 
 | 模块 | 类型 | 说明 |
 | --- | --- | --- |
-| Retargeting | `Layer` | 动画重定向层 `L1` |
+| Pipeline | `Layer` | 处理管线的一层 `L1` |
 | TArray\<T\> | 容器 | 动态数组 `TArray<int32>` |
 | TObjectPtr | 智能指针 | UObject 引用 |
 

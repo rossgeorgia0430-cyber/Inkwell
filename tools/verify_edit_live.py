@@ -2,10 +2,10 @@
 """真实 WebView2 回归：Obsidian 风格 Live Preview 编辑模式的安全网。
 
 覆盖：进入/退出编辑、块数与激活、就地修改并经 getText() 校验、插入代码块/
-公式、删图、保存落盘、外部改写文件后的保存冲突路径（拒绝覆盖 / 强制覆盖）。
-另外把 verify_live_blocks.py / verify_edit_image_bounds.py 里的纯逻辑样例
-原样搬来，改为调用真实 JS 的 window.__ink.edit.splitBlocks / joinBlocks /
-findImageAt / findProtectedRanges，取代那两个脚本里重抄一遍 JS 逻辑的方式。
+公式、删图、保存落盘、外部改写文件后的保存冲突路径（拒绝覆盖 / 强制覆盖）；
+另外驱动真实浏览器里的 window.__ink.edit.splitBlocks / joinBlocks /
+findImageAt / findProtectedRanges，覆盖 Live Preview 分块与图片边界识别的
+纯逻辑样例，避免另起脚本重抄一遍 JS 逻辑。
 """
 import base64
 import json
@@ -78,8 +78,8 @@ def wait_file_contains(path, needle, timeout=10):
     return False, text
 
 
-# —— 纯逻辑样例：原样从 verify_live_blocks.py / verify_edit_image_bounds.py 搬来，
-#    但改为驱动真实浏览器里的 window.__ink.edit.* ——
+# —— 纯逻辑样例：分块（splitBlocks/joinBlocks）与图片边界识别（findImageAt/
+#    findProtectedRanges），驱动真实浏览器里的 window.__ink.edit.* ——
 BLOCK_SPLIT_SAMPLES = [
     ("", [""]),
     ("hello", ["hello"]),
@@ -134,6 +134,36 @@ def check_block_logic(window, res):
         else:
             ok = bool(hit) and hit.get("dest") == expected_dest
         checks.append({"name": "findImageAt:" + repr(text)[:30], "ok": ok, "got": hit})
+
+    # data URI 目标（含 base64 中的 +/=，dest 里没有裸括号）：不是简单相等，
+    # 改成前缀 + markdown 收尾校验。
+    b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    data_uri_text = "x\n\n![shot](data:image/png;base64,%s)\n\ny\n" % b64
+    hit = json_js(window, "window.__ink.edit.findImageAt(%s, %d)" % (
+        json.dumps(data_uri_text), data_uri_text.index("data:")))
+    ok = bool(hit) and hit.get("dest", "").startswith("data:image/png;base64,") and hit.get("markdown", "").endswith(")")
+    checks.append({"name": "findImageAt:data-uri", "ok": ok, "got": hit})
+
+    # title 引号：dest 里带着 `"..."`，同样不做整串相等，只要求子串命中。
+    title_quote_text = '![t](foo.png "my title")'
+    hit = json_js(window, "window.__ink.edit.findImageAt(%s, 0)" % json.dumps(title_quote_text))
+    ok = bool(hit) and 'foo.png "my title"' in hit.get("dest", "")
+    checks.append({"name": "findImageAt:title-quote", "ok": ok, "got": hit})
+
+    # 删除后源码干净：图片语法独占一行时，连同该行一起删除不留空行。
+    # 找边界仍走真实 JS，只有删除产生的切片校验留在 Python 侧。
+    clean_delete_text = "a\n\n![x](images/x.png)\n\nb\n"
+    hit = json_js(window, "window.__ink.edit.findImageAt(%s, %d)" % (
+        json.dumps(clean_delete_text), clean_delete_text.index("![")))
+    ok = False
+    if hit:
+        line_start = clean_delete_text.rfind("\n", 0, hit["start"]) + 1
+        line_end = clean_delete_text.find("\n", hit["end"])
+        line = clean_delete_text[line_start:line_end]
+        out = clean_delete_text[:line_start] + clean_delete_text[line_end + 1:]
+        ok = (line.strip() == hit["markdown"] and "![x]" not in out
+              and "a\n" in out and "b\n" in out)
+    checks.append({"name": "findImageAt:clean-delete", "ok": ok, "got": hit})
 
     protected = js(window, "JSON.stringify(window.__ink.edit.findProtectedRanges(%s))" % json.dumps("`a` and ```\nb\n```"))
     protected = json.loads(protected)

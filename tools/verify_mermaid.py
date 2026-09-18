@@ -21,10 +21,10 @@ SAMPLE = """# Mermaid 回归
 
 ```mermaid
 flowchart TB
-    A[\"任意 Client / Agent\"] --> B[\"Compact Front Door\"]
-    B --> C[\"Policy Gate\"]
-    C --> D[\"Native Write Broker\"]
-    D --> E[\"Operation Ledger\"]
+    A[\"输入\"] --> B[\"校验\"]
+    B --> C[\"处理\"]
+    C --> D[\"输出\"]
+    D --> E[\"记录\"]
 ```
 """
 
@@ -58,7 +58,7 @@ def probe(window):
             "document.querySelector('.mermaid-block pre').textContent"
         )
         diagram_text = window.evaluate_js("document.querySelector('.mermaid-diagram svg').textContent")
-        assert "Client" in diagram_text and "Native" in diagram_text
+        assert "输入" in diagram_text and "输出" in diagram_text
         result["initial_label_containers"] = window.evaluate_js(
             "document.querySelectorAll('.mermaid-diagram foreignObject').length"
         )
@@ -98,7 +98,7 @@ def probe(window):
         )
         assert result["dark_visible_labels"] > 0
         dark_diagram_text = window.evaluate_js("document.querySelector('.mermaid-diagram svg').textContent")
-        assert "Client" in dark_diagram_text and "Native" in dark_diagram_text
+        assert "输入" in dark_diagram_text and "输出" in dark_diagram_text
 
         # 输出 SVG 中不能残留可执行或可导航节点。
         result["stage"] = "svg-safety"

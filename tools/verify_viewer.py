@@ -66,6 +66,19 @@ def js(window, expression):
     return window.evaluate_js(expression)
 
 
+def zoom_until_overflow(window, tries=8):
+    """反复放大直到内容在两个方向都溢出舞台，供右键平移测试使用；
+    单次固定次数的 zoom 不保证真的溢出（内容宽高比、fit 起点各不相同）。"""
+    cur = None
+    for _ in range(tries):
+        cur = json.loads(js(window, "JSON.stringify(window.__ink.image.state())"))
+        if cur["width"] > cur["stageWidth"] * 1.2 and cur["height"] > cur["stageHeight"] * 1.2:
+            break
+        js(window, "window.__ink.image.zoom(1)")
+        time.sleep(0.15)
+    return cur
+
+
 def probe(window):
     result = {"stage": "start"}
     try:
@@ -97,13 +110,7 @@ def probe(window):
 
         # ---- 3) 右键拖动平移（SVG）----
         result["stage"] = "mermaid-pan"
-        # 先放大到必然溢出舞台
-        for _ in range(8):
-            cur = json.loads(js(window, "JSON.stringify(window.__ink.image.state())"))
-            if cur["width"] > cur["stageWidth"] * 1.2 and cur["height"] > cur["stageHeight"] * 1.2:
-                break
-            js(window, "window.__ink.image.zoom(1)")
-            time.sleep(0.15)
+        zoom_until_overflow(window)
         pan = js(window, r"""
 (function(){
   var stage = document.querySelector('.image-viewer-stage');
@@ -155,15 +162,15 @@ def probe(window):
         # ---- 5) 图片灯箱回归：kind='image'、缩放、右键平移 ----
         result["stage"] = "image-viewer"
         js(window, "document.querySelector('.image-block img').click()")
+        # 用 scale === fit 而非 scale !== 1：close() 不重置 scale，上一次灯箱（Mermaid）
+        # 残留的高倍率会让 !== 1 在这次 fit 真正落地前就提前满足。
         assert wait_js(window, "window.__ink.image.state().open && window.__ink.image.state().kind === 'image'"
-                               " && window.__ink.image.state().scale !== 1")
+                               " && window.__ink.image.state().scale === window.__ink.image.state().fit")
         ist = json.loads(js(window, "JSON.stringify(window.__ink.image.state())"))
         result["image_open"] = ist
         assert ist["width"] > 0
-        # 图片已 900x560，fit 后可能未溢出；放大两级再平移
-        js(window, "window.__ink.image.zoom(1)")
-        js(window, "window.__ink.image.zoom(1)")
-        time.sleep(0.2)
+        # 图片已 900x560，fit 后可能未溢出；放大到两个方向都溢出舞台后再平移
+        zoom_until_overflow(window)
         ipan = js(window, r"""
 (function(){
   var stage = document.querySelector('.image-viewer-stage');
@@ -189,8 +196,9 @@ def probe(window):
         # ---- 6) 点击正文图示也能打开灯箱 ----
         result["stage"] = "diagram-click-open"
         js(window, "document.querySelector('.mermaid-diagram').click()")
+        # 同上：上一次（图片）灯箱残留的高倍率同样会让 !== 1 提前满足。
         assert wait_js(window, "window.__ink.image.state().open && window.__ink.image.state().kind === 'svg'"
-                               " && window.__ink.image.state().scale !== 1")
+                               " && window.__ink.image.state().scale === window.__ink.image.state().fit")
         js(window, "window.__ink.image.close()")
 
         result["errors"] = js(window, "JSON.stringify(window.__errors || [])")

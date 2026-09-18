@@ -38,21 +38,29 @@
 
 ```
 inkwell/
-  app.py        宿主：无边框窗口、js_api 桥、文件监视、窗口控制
-  host.py       跨平台入口（数据目录 / 打开文件 / 剪贴板 / 窗口后端）
-  host_win.py   Windows：Win32 无边框缩放 / Snap / CF_DIB 剪贴板
-  host_mac.py   macOS：Cocoa 窗口 / NSPasteboard / Finder 打开文档
-  server.py     内置 HTTP 服务器：页面 + 资源 + 图片
-  render.py     渲染管线：图片本地化 / LaTeX 保护 / 代码块 / Markdown→HTML
-  page.py       组装完整 HTML 文档（外链资源）
-  assets/       app.css / app.js / katex（离线）/ pygments-*.css / icon.ico
-build.py        PyInstaller 打包（onedir，Windows）
-Inkwell.spec    打包配置
-gen_pygments.py 生成代码高亮主题
-gen_icon.py     生成应用图标（ico / png / icns）
-scripts/        Windows 安装脚本；macOS：install_macos.py、macos/launcher.c
-tests/          sample.md 测试文档
-tools/          serve_only.py / probe*.py 验证脚本
+  app.py          应用入口：无边框窗口、js_api 桥、文件监视、窗口控制
+  api.py          JS 桥：window.pywebview.api 暴露给前端的方法（class Api）
+  documents.py    文档路径校验/读写、偏好设置（Api 与 app 共用）
+  images.py       图片资源：本地化、data URI 落盘、文件对话框过滤串
+  render.py       渲染管线：图片本地化 / LaTeX 保护 / 代码块 / Markdown→HTML
+  sanitize.py     HTML 安全清理（allowlist）+ 渲染后图片地址本地化重写
+  page.py         组装完整 HTML 文档（外链资源）
+  server.py       内置 HTTP 服务器：页面 + 资源 + 图片
+  host.py         跨平台宿主辅助（数据目录 / 打开文件 / 剪贴板 / 窗口后端）
+  host_win.py     Windows：Win32 无边框缩放 / Snap / CF_DIB 剪贴板
+  host_mac.py     macOS：Cocoa 窗口 / NSPasteboard / Finder 打开文档
+  assets/js/      前端 ES modules，入口 main.js；state.js 是唯一的共享状态容器；
+                  edit/ 为 Live Preview 编辑模式（blocks.js 纯文本分块 / live.js 块级 DOM / editor.js 编辑会话）
+  assets/css/     按区域拆分样式：base / chrome / article / editor / viewer
+  assets/         另有 katex/、mermaid/（离线引擎）、pygments-*.css、图标
+build.py          PyInstaller 打包（onedir，Windows）
+Inkwell.spec      打包配置
+gen_pygments.py   生成代码高亮主题
+gen_icon.py       生成应用图标（ico / png / icns）
+scripts/          Windows 安装脚本（install.ps1 / uninstall.ps1 / cleanup_legacy.ps1，共用逻辑在 common.ps1）；
+                  macOS：install_macos.py、macos/launcher.c
+tests/            sample.md 测试文档
+tools/            verify_*.py 回归检查（见下方「测试」）；serve_only.py 仅起服务器、用浏览器看前端
 ```
 
 ## 开发运行（源码态）
@@ -73,6 +81,14 @@ python3 scripts/install_macos.py
 .venv/bin/python -m inkwell tests/sample.md
 open Inkwell.app
 ```
+
+## 测试
+
+`tools/` 下的 `verify_*.py` 是回归检查，逐个用 `python tools\verify_xxx.py` 运行即可，无测试框架：
+
+- **非 GUI**（纯逻辑，跑完直接打印结果）：`verify_host.py`、`verify_edit_mode.py`、`verify_embedded_images.py`、`verify_render_security.py`、`verify_lp_markers.py`、`verify_platform_gates.py`。
+- **需要 WebView2**：其余 `verify_*.py`（如 `verify_viewer` / `verify_mermaid` / `verify_edit_live` / `verify_copy`）。运行时会弹出一个 WebView2 窗口，自动跑完并关闭，结果写入 `tools/_*_result.json`（看其中的 `ok` / `all_pass` 字段）。
+- `verify_mac_ui_thread.py` 是 macOS 专用检查（不弹窗，但要求 `sys.platform == "darwin"`），在 Windows 上运行会直接断言失败。
 
 ## 构建与安装
 
