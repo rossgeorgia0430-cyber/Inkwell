@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import webview
 from PIL import Image, ImageDraw, ImageGrab
 
-from inkwell import app as A
+from inkwell import host_win
+from inkwell import images
 from inkwell import render as R
 from inkwell import server as S
 from inkwell.page import build_page
@@ -126,13 +127,13 @@ zoomButtons:v?v.querySelectorAll('.image-zoom-btn').length:0};})()
 })()
 """)
         source = res["dom"].get("currentSrc", "") if res.get("dom") else ""
-        asset = A._image_asset_path_for_copy(source)
-        dib = A._image_asset_to_dib(asset) if asset else b""
+        asset = images.asset_path_for_url(source)
+        dib = host_win._image_asset_to_dib(asset) if asset else b""
         res["native"] = {
             "asset_found": bool(asset and asset.is_file()),
             "dib_bytes": len(dib),
-            "rejects_remote": A._image_asset_path_for_copy("https://example.com/__img__/test.png") is None,
-            "rejects_traversal": A._image_asset_path_for_copy("/__img__/../secret.png") is None,
+            "rejects_remote": images.asset_path_for_url("https://example.com/__img__/test.png") is None,
+            "rejects_traversal": images.asset_path_for_url("/__img__/../secret.png") is None,
         }
         res["all_pass"] = bool(
             res["dom"].get("ok")

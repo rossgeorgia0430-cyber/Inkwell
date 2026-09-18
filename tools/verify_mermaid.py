@@ -13,7 +13,7 @@ import webview
 
 from inkwell import render as R
 from inkwell import server as S
-from inkwell.app import Api
+from inkwell.api import Api
 from inkwell.page import build_page
 
 

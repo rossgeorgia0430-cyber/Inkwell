@@ -1,4 +1,4 @@
-"""Cross-platform host helpers: data dir, file open, clipboard, window backend."""
+"""跨平台宿主辅助：数据目录、打开本地文件、剪贴板、窗口后端。"""
 
 import os
 import subprocess
@@ -62,7 +62,7 @@ def create_window_backend(api):
 
 
 class WindowBackend:
-    """pywebview-only fallback used on Linux / unknown platforms."""
+    """Linux / 未知平台的兜底实现：只依赖 pywebview 自身能力，不接入原生窗口 API。"""
 
     def __init__(self, api):
         self.api = api
@@ -75,27 +75,20 @@ class WindowBackend:
         window = self.api._window
         if window is None:
             return
-        try:
-            if self.is_maximized():
-                window.restore()
-                self._maximized = False
-            else:
-                window.maximize()
-                self._maximized = True
-        except Exception:
-            try:
-                window.toggle_fullscreen()
-            except Exception:
-                pass
+        if self.is_maximized():
+            window.restore()
+            self._maximized = False
+        else:
+            window.maximize()
+            self._maximized = True
 
     def is_maximized(self):
         window = self.api._window
         if window is None:
             return False
-        for attr in ("maximized",):
-            val = getattr(window, attr, None)
-            if isinstance(val, bool):
-                return val
+        val = getattr(window, "maximized", None)
+        if isinstance(val, bool):
+            return val
         return bool(self._maximized)
 
     def native_drag(self):
@@ -105,10 +98,7 @@ class WindowBackend:
         return None
 
     def ui_invoke(self, fn):
-        try:
-            fn()
-        except Exception:
-            pass
+        fn()
 
     def set_represented_file(self, path):
         return None

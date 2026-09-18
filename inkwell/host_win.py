@@ -1,10 +1,11 @@
-"""Windows host: Win32 frameless chrome, DIB clipboard, WinForms UI thread."""
+"""Windows 宿主：Win32 无边框窗口外观、DIB 剪贴板、WinForms UI 线程调度。"""
 
 import ctypes
-import io
 import time
 from ctypes import wintypes
 from pathlib import Path
+
+from . import log_exception
 
 _user32 = ctypes.windll.user32
 _WM_NCLBUTTONDOWN = 0x00A1
@@ -150,40 +151,28 @@ def _write_dib_to_clipboard(dib):
 
 
 def _image_asset_to_dib(path):
-    """将本地化图片编码为通用 24-bit DIB（不触碰系统剪贴板）。"""
+    """将本地化图片编码为通用 24-bit DIB（不触碰系统剪贴板）。
+
+    打包配置排除了 PIL，正式版本只有 System.Drawing 可用，因此统一走这条路径。
+    """
     try:
+        from System.Drawing import Bitmap, Color, Graphics
+        from System.Drawing.Imaging import ImageFormat, PixelFormat
+        from System.IO import MemoryStream
+        source = Bitmap(str(path))
+        bitmap = Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
+        graphics = Graphics.FromImage(bitmap)
+        stream = MemoryStream()
         try:
-            from PIL import Image
-            with Image.open(path) as raw:
-                raw.load()
-                if "A" in raw.getbands() or (raw.mode == "P" and "transparency" in raw.info):
-                    rgba = raw.convert("RGBA")
-                    image = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-                    image.alpha_composite(rgba)
-                    image = image.convert("RGB")
-                else:
-                    image = raw.convert("RGB")
-                output = io.BytesIO()
-                image.save(output, format="BMP")
-                bmp = output.getvalue()
-        except ImportError:
-            from System.Drawing import Bitmap, Color, Graphics
-            from System.Drawing.Imaging import ImageFormat, PixelFormat
-            from System.IO import MemoryStream
-            source = Bitmap(str(path))
-            bitmap = Bitmap(source.Width, source.Height, PixelFormat.Format24bppRgb)
-            graphics = Graphics.FromImage(bitmap)
-            stream = MemoryStream()
-            try:
-                graphics.Clear(Color.White)
-                graphics.DrawImage(source, 0, 0, source.Width, source.Height)
-                bitmap.Save(stream, ImageFormat.Bmp)
-                bmp = bytes(stream.ToArray())
-            finally:
-                stream.Dispose()
-                graphics.Dispose()
-                bitmap.Dispose()
-                source.Dispose()
+            graphics.Clear(Color.White)
+            graphics.DrawImage(source, 0, 0, source.Width, source.Height)
+            bitmap.Save(stream, ImageFormat.Bmp)
+            bmp = bytes(stream.ToArray())
+        finally:
+            stream.Dispose()
+            graphics.Dispose()
+            bitmap.Dispose()
+            source.Dispose()
         if len(bmp) <= 14 or bmp[:2] != b"BM":
             raise ValueError("无法生成有效图片数据")
         return bmp[14:]
@@ -221,19 +210,28 @@ def _apply_minmax_for_current_monitor(hwnd, lparam):
 
 
 def _apply_window_style(hwnd, style):
-    try:
-        if _GetStyle(hwnd, _GWL_STYLE) == style:
-            return
-        _SetStyle(hwnd, _GWL_STYLE, style)
-        _user32.SetWindowPos(
-            hwnd, None, 0, 0, 0, 0,
-            _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_FRAMECHANGED,
-        )
-    except Exception:
-        pass
+    """SetWindowPos 以返回值而非异常表示失败，这里不检查返回值——样式设置属于
+    尽力而为的视觉调整，失败也不影响窗口可用性。"""
+    if _GetStyle(hwnd, _GWL_STYLE) == style:
+        return
+    _SetStyle(hwnd, _GWL_STYLE, style)
+    _user32.SetWindowPos(
+        hwnd, None, 0, 0, 0, 0,
+        _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_FRAMECHANGED,
+    )
 
 
 def _install_native_chrome(hwnd):
+    """让无边框窗口获得原生缩放交互与贴靠外观。
+
+    永久加上 WS_THICKFRAME | WS_MAXIMIZEBOX：无边框窗口默认没有这两个样式位，
+    加上才有原生的 8 向拖拽缩放和 Windows 的 Aero Snap。子类化窗口过程后，
+    WM_NCCALCSIZE 直接返回 0，让客户区铺满整个窗口，不再画出系统的缩放边框。
+    pythonnet 覆写 Form.WndProc 对原生消息循环不生效，只能用 SetWindowLongPtr
+    在 Win32 层面子类化；_proc 回调必须存进 _WNDPROC_REFS 保活，否则 ctypes
+    包装的函数指针会被 GC 回收导致崩溃。子类化操作的是窗口句柄，必须在其所属
+    的 UI 线程上做，调用方经 ui_invoke 保证这一点。
+    """
     old_proc = [0]
 
     @_WNDPROC
@@ -253,16 +251,15 @@ def _install_native_chrome(hwnd):
 
 
 def _set_native_frame_visual(hwnd, maximized):
-    try:
-        dwm = ctypes.windll.dwmapi.DwmSetWindowAttribute
-        dwm.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
-        dwm.restype = ctypes.c_long
-        corner = ctypes.c_int(_DWMWCP_DONOTROUND if maximized else _DWMWCP_DEFAULT)
-        border = ctypes.c_uint32(_DWMWA_COLOR_NONE if maximized else _DWMWA_COLOR_DEFAULT)
-        dwm(hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(corner), ctypes.sizeof(corner))
-        dwm(hwnd, _DWMWA_BORDER_COLOR, ctypes.byref(border), ctypes.sizeof(border))
-    except Exception:
-        pass
+    """DwmSetWindowAttribute 在不支持该属性的系统上返回错误 HRESULT 而非抛异常，
+    这里不检查返回值——旧系统上圆角/边框颜色维持系统默认即可，不影响功能。"""
+    dwm = ctypes.windll.dwmapi.DwmSetWindowAttribute
+    dwm.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    dwm.restype = ctypes.c_long
+    corner = ctypes.c_int(_DWMWCP_DONOTROUND if maximized else _DWMWCP_DEFAULT)
+    border = ctypes.c_uint32(_DWMWA_COLOR_NONE if maximized else _DWMWA_COLOR_DEFAULT)
+    dwm(hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(corner), ctypes.sizeof(corner))
+    dwm(hwnd, _DWMWA_BORDER_COLOR, ctypes.byref(border), ctypes.sizeof(border))
 
 
 class Win32Backend:
@@ -277,31 +274,38 @@ class Win32Backend:
         return self.api._window.native.Handle.ToInt32()
 
     def ui_invoke(self, fn):
-        try:
-            from System import Action
-            self.api._window.native.BeginInvoke(Action(fn))
-        except Exception:
+        """把 fn 调度到 WinForms UI 线程执行。
+
+        BeginInvoke 失败时不回退到当前线程直接调用——WinForms 要求 UI 操作必须
+        发生在 UI 线程，回退会破坏这个前提；调度失败就让异常自然抛出。fn 本身
+        在 UI 线程上抛出的异常会冒泡到 .NET 消息循环，这里兜一层边界并记录。
+        """
+        def guarded():
             try:
                 fn()
             except Exception:
-                pass
+                log_exception()
+        from System import Action
+        self.api._window.native.BeginInvoke(Action(guarded))
+
+    def _remember_normal_size(self):
+        """记录当前（非最大化）窗口尺寸，供退出最大化时恢复。"""
+        form = self.api._window.native
+        self._normal_size = (form.Width, form.Height)
 
     def _apply_maximized_bounds(self):
-        try:
-            from System.Drawing import Rectangle
-            form = self.api._window.native
-            rects = _monitor_rects_for_window(self._hwnd())
-            if not rects:
-                return
-            _monitor, work = rects
-            form.MaximizedBounds = Rectangle(
-                work.left,
-                work.top,
-                work.right - work.left,
-                work.bottom - work.top,
-            )
-        except Exception:
-            pass
+        from System.Drawing import Rectangle
+        form = self.api._window.native
+        rects = _monitor_rects_for_window(self._hwnd())
+        if not rects:
+            return
+        _monitor, work = rects
+        form.MaximizedBounds = Rectangle(
+            work.left,
+            work.top,
+            work.right - work.left,
+            work.bottom - work.top,
+        )
 
     def init_chrome(self):
         def init_state_sync():
@@ -315,7 +319,7 @@ class Win32Backend:
                 maximized = self.is_maximized()
                 if not maximized:
                     self._apply_maximized_bounds()
-                    self._normal_size = (form.Width, form.Height)
+                    self._remember_normal_size()
                 if maximized == self._maximized:
                     return
                 self._maximized = maximized
@@ -331,27 +335,22 @@ class Win32Backend:
 
     def toggle_maximize(self):
         def fn():
-            try:
-                from System.Windows.Forms import FormWindowState
-                from System.Drawing import Size
-                form = self.api._window.native
-                if form.WindowState == FormWindowState.Maximized:
-                    form.WindowState = FormWindowState.Normal
-                    if self._normal_size:
-                        form.Size = Size(*self._normal_size)
-                else:
-                    self._normal_size = (form.Width, form.Height)
-                    self._apply_maximized_bounds()
-                    form.WindowState = FormWindowState.Maximized
-            except Exception:
-                pass
+            from System.Windows.Forms import FormWindowState
+            from System.Drawing import Size
+            form = self.api._window.native
+            if form.WindowState == FormWindowState.Maximized:
+                form.WindowState = FormWindowState.Normal
+                if self._normal_size:
+                    form.Size = Size(*self._normal_size)
+            else:
+                self._remember_normal_size()
+                self._apply_maximized_bounds()
+                form.WindowState = FormWindowState.Maximized
         self.ui_invoke(fn)
 
     def is_maximized(self):
-        try:
-            return bool(_user32.IsZoomed(self._hwnd()))
-        except Exception:
-            return False
+        # JS 桥直接调用，不在 UI 线程上；异常直接抛出，交由 Api.win_is_maximized 兜底。
+        return bool(_user32.IsZoomed(self._hwnd()))
 
     def native_drag(self):
         hwnd = self._hwnd()
@@ -360,13 +359,13 @@ class Win32Backend:
             from System.Drawing import Size
             started_maximized = self.is_maximized()
             if not started_maximized:
-                self._normal_size = (self.api._window.native.Width, self.api._window.native.Height)
+                self._remember_normal_size()
             _user32.ReleaseCapture()
             _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)
             if started_maximized and not self.is_maximized() and self._normal_size:
                 self.api._window.native.Size = Size(*self._normal_size)
             elif not self.is_maximized():
-                self._normal_size = (self.api._window.native.Width, self.api._window.native.Height)
+                self._remember_normal_size()
             self._apply_maximized_bounds()
 
         self.ui_invoke(fn)
@@ -381,7 +380,7 @@ class Win32Backend:
             _user32.ReleaseCapture()
             _user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, code, 0)
             if not self.is_maximized():
-                self._normal_size = (self.api._window.native.Width, self.api._window.native.Height)
+                self._remember_normal_size()
 
         self.ui_invoke(fn)
 

@@ -3,7 +3,7 @@
 import sys, os, time, json, tempfile, traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import webview
-from inkwell.app import Api
+from inkwell.api import Api
 from inkwell import render as R, server as S
 from inkwell.page import build_page
 

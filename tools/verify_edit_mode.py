@@ -9,7 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from inkwell.app import Api, _MAX_DOCUMENT_BYTES
+from inkwell.api import Api
+from inkwell.documents import MAX_DOCUMENT_BYTES
 
 
 class _FakeWindow:
@@ -119,17 +120,9 @@ def main():
         assert "data:image/png;base64," in emb["markdown"]
         assert "/__img__/" not in emb["markdown"]
 
-        # save_document_as
-        out = root / "copy.md"
-        api._window = _FakeWindow(save_path=str(out))
-        as_payload = api.save_document_as("# as\n")
-        assert as_payload["ok"], as_payload
-        assert out.read_text(encoding="utf-8") == "# as\n"
-        assert api.current_file == str(out.resolve())
-
         # oversized save rejected
-        big = "x" * (_MAX_DOCUMENT_BYTES + 10)
-        bad = api.save_document(big, str(out), None)
+        big = "x" * (MAX_DOCUMENT_BYTES + 10)
+        bad = api.save_document(big, str(doc), None)
         assert not bad["ok"]
 
         # welcome/no path

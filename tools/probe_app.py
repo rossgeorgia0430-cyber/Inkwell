@@ -7,7 +7,7 @@ import webview
 from inkwell import render as R
 from inkwell import server as S
 from inkwell.page import build_page
-from inkwell.app import Api
+from inkwell.api import Api
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESULT = os.path.join(HERE, "_probe_app_result.json")

@@ -3,14 +3,13 @@
 Inkwell - 内置静态/页面服务器
 在本地回环地址提供：
   /                -> 当前页面 HTML（内存中，由 app 设置）
-  /assets/<path>  -> 打包资源（app.css/app.js/katex/pygments-*.css）
-  /__img__/<name> -> 渲染时本地化的图片（render.ASSETS_DIR）
+  /assets/<path>  -> 打包资源（前端脚本/样式/第三方库等静态文件）
+  /__img__/<name> -> 渲染时本地化的图片（images.ASSETS_DIR）
 
 用自建服务器（而非 pywebview 内置 http_server）以便完全掌控路由，并避免每次启动
 拷贝 KaTeX 字体；窗口以 http://127.0.0.1:<port>/ 方式加载。
 """
 
-import os
 import sys
 import threading
 import mimetypes
@@ -18,13 +17,8 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, unquote
 
-IMG_URL_PREFIX = "/__img__/"
-
-
-def _render_assets_dir():
-    # 延迟导入 markdown/Pygments 渲染栈；首个页面外壳不需要它们。
-    from . import render
-    return render.ASSETS_DIR
+from . import __version__
+from . import images
 
 
 def asset_root() -> Path:
@@ -107,7 +101,7 @@ def _host_allowed(host_header: str) -> bool:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "Inkwell/1.3.0"
+    server_version = f"Inkwell/{__version__}"
 
     def log_message(self, *args):
         pass  # 静默
@@ -130,7 +124,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _send_file(self, path: Path, extra_headers=None):
         try:
             data = path.read_bytes()
-        except Exception:
+        except OSError:
             self._send_bytes(b"not found", "text/plain; charset=utf-8", 404)
             return
         self._send_bytes(data, _guess_type(path), extra_headers=extra_headers)
@@ -158,12 +152,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_bytes(b"asset not found", "text/plain; charset=utf-8", 404)
             return
 
-        if path.startswith(IMG_URL_PREFIX):
-            assets_dir = _render_assets_dir()
+        if path.startswith(images.IMG_URL_PREFIX):
+            assets_dir = images.ASSETS_DIR
             if assets_dir is None:
                 self._send_bytes(b"no img dir", "text/plain; charset=utf-8", 404)
                 return
-            target = _safe_join(assets_dir, path[len(IMG_URL_PREFIX):])
+            target = _safe_join(assets_dir, path[len(images.IMG_URL_PREFIX):])
             if target and target.is_file():
                 self._send_file(target, extra_headers=_IMG_EXTRA_HEADERS)
                 return

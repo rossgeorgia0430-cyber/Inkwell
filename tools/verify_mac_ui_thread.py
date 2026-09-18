@@ -62,7 +62,7 @@ def check_off_main_and_inject():
     t0 = time.perf_counter()
     schedule_window_close(None, delay=0.0)
     assert time.perf_counter() - t0 < 1.0, "schedule_window_close blocked"
-    from inkwell.app import Api
+    from inkwell.api import Api
     api = Api()
     assert api._closing is False
     t0 = time.perf_counter()

@@ -15,7 +15,7 @@ def main():
     assert "from .host_win import" not in app
     assert "from .host_mac import" in app
     assert "if IS_MACOS:" in app
-    assert "window.evaluate_js(js)" in app
+    assert "window.run_js(js)" in app
     assert "if IS_WINDOWS:" in host
     assert "if IS_MACOS:" in host
     assert "from .host_win import Win32Backend" in host

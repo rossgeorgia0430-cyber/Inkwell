@@ -108,7 +108,7 @@ _SHELL = """
 """
 
 
-def _script_safe_json(value) -> str:
+def script_safe_json(value) -> str:
     """生成可安全嵌入 script 文本节点的 JSON（阻断 </script> 等提前闭合）。"""
     return (json.dumps(value, ensure_ascii=False)
             .replace("&", r"\u0026")
@@ -128,7 +128,7 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
     shell = (before_toc + (toc_html or "") + between
              + (content_html or "") + after_content)
     # 初始 payload（标题 + 文档路径），供 JS 设置标题栏 & 播种跳转历史
-    boot = _script_safe_json({
+    boot = script_safe_json({
         "title": title or "",
         "path": path or "",
         "preferences": preferences or {},

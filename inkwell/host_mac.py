@@ -1,15 +1,15 @@
-"""macOS host: Cocoa/WKWebView chrome, NSPasteboard image copy, Finder open events."""
+"""macOS 宿主：Cocoa/WKWebView 窗口外观、NSPasteboard 图片复制、Finder 打开事件。"""
 
 import io
 import os
-import sys
 import threading
 import time
 from pathlib import Path
 
+from . import log_exception
 from .host import WindowBackend
 
-# Keep the Apple Event handler alive; trampolines get GC'd otherwise.
+# 保持 Apple Event handler 存活；否则它的 trampoline 会被 GC 回收。
 _OPEN_DOC_HANDLER = None
 _OPEN_FILES_CALLBACK = None
 _DELEGATE_PATCHED = False
@@ -46,7 +46,7 @@ def mark_exiting():
 
 
 def _post_wake_event(app=None):
-    """NSApplication.stop_ only leaves the run loop after the next event."""
+    """NSApplication.stop_ 只有在下一个事件到来后才会真正退出 run loop，这里补发一个事件把它唤醒。"""
     try:
         from AppKit import NSApp, NSEvent, NSPoint
     except ImportError:
@@ -69,25 +69,25 @@ def _post_wake_event(app=None):
         if event is not None:
             app.postEvent_atStart_(event, True)
     except Exception:
-        pass
+        log_exception()
 
 
 def wake_app_loop():
-    """Unblock NSApp.run() after stop_ so the process can actually exit."""
+    """在 stop_ 之后解除 NSApp.run() 的阻塞，让进程真正退出。"""
     try:
         from AppKit import NSApp
         app = NSApp
         try:
             app.stop_(None)
         except Exception:
-            pass
+            log_exception()
         try:
             app.abortModal()
         except Exception:
-            pass
+            log_exception()
         _post_wake_event(app)
     except Exception:
-        pass
+        log_exception()
 
 
 def _start_exit_watchdog(seconds=2.0):
@@ -104,11 +104,11 @@ def _start_exit_watchdog(seconds=2.0):
 
 
 def schedule_window_close(window, delay=0.1):
-    """Close after the JS-bridge evaluate_js return has a live WKWebView.
+    """等 JS 桥的 evaluate_js 调用返回、WKWebView 仍存活时再关闭窗口。
 
-    win_close runs on a pywebview worker that then calls evaluate_js. If we
-    destroy() first, windowWillClose_ nils the webview and that semaphore
-    never releases — the interpreter hangs on shutdown.
+    win_close 运行在 pywebview 的 worker 线程上，随后会调用 evaluate_js；如果这里
+    先 destroy()，windowWillClose_ 会把 webview 置空，evaluate_js 等待的信号量就
+    永远不会释放——解释器会卡在退出流程里。
     """
     mark_exiting()
     if window is None:
@@ -127,7 +127,7 @@ def schedule_window_close(window, delay=0.1):
                         native.performClose_(None)
                         return
                 except Exception:
-                    pass
+                    log_exception()
                 try:
                     window.destroy()
                 except Exception:
@@ -144,11 +144,11 @@ def schedule_window_close(window, delay=0.1):
 
 
 def run_off_main(fn, name="InkwellOffMain"):
-    """Run fn on a background thread when called from the Cocoa main thread.
+    """若当前在 Cocoa 主线程上调用，把 fn 转到后台线程执行。
 
-    pywebview's evaluate_js waits on a semaphore after AppHelper.callAfter.
-    Doing that (or any long Python work) on the AppKit thread deadlocks the
-    run loop and macOS reports Inkwell as not responding.
+    pywebview 的 evaluate_js 在 AppHelper.callAfter 之后会等待一个信号量；在
+    AppKit 线程上做这件事（或任何耗时的 Python 工作）会让 run loop 死锁，
+    macOS 会把 Inkwell 报告为未响应。
     """
     if not callable(fn):
         return
@@ -159,7 +159,8 @@ def run_off_main(fn, name="InkwellOffMain"):
 
 
 def invoke_on_main(fn, wait=False, timeout=8):
-    """Schedule fn on the Cocoa main thread. Optionally wait (never from main)."""
+    """把 fn 调度到 Cocoa 主线程执行；wait=True 时阻塞等待其返回（调用方本身若已
+    在主线程，会直接同步执行 fn，不存在等待自己的问题）。"""
     if _EXITING and wait:
         raise RuntimeError("Inkwell is exiting")
     if is_main_thread():
@@ -191,11 +192,10 @@ def invoke_on_main(fn, wait=False, timeout=8):
 
 
 def evaluate_js_async(window, script) -> bool:
-    """Run JavaScript on WKWebView without blocking the caller.
+    """在 WKWebView 上执行 JS，不阻塞调用方。
 
-    Returns True if the evaluation was scheduled. pywebview Window.run_js /
-    evaluate_js both end in cocoa.BrowserView.evaluate_js, which deadlocks
-    when invoked from the Cocoa main thread.
+    返回 True 表示已成功排入执行队列。pywebview 的 Window.run_js / evaluate_js
+    最终都会走到 cocoa.BrowserView.evaluate_js，从 Cocoa 主线程上调用会死锁。
     """
     if window is None or not script or _EXITING:
         return False
@@ -226,7 +226,7 @@ def evaluate_js_async(window, script) -> bool:
             try:
                 webview.evaluateJavaScript_completionHandler_(script, None)
             except Exception:
-                pass
+                log_exception()
 
     try:
         AppHelper.callAfter(eval_js)
@@ -236,7 +236,7 @@ def evaluate_js_async(window, script) -> bool:
 
 
 def copy_image_to_clipboard(path: Path) -> None:
-    """Write a local image onto the macOS pasteboard as NSImage (TIFF/PNG)."""
+    """把本地图片以 NSImage（TIFF/PNG）形式写入 macOS 的系统粘贴板。"""
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(str(path))
@@ -293,7 +293,7 @@ class CocoaBackend(WindowBackend):
                     | NSWindowStyleMaskClosable
                 )
             except Exception:
-                pass
+                log_exception()
         self.ui_invoke(fn)
 
     def is_maximized(self):
@@ -307,7 +307,7 @@ class CocoaBackend(WindowBackend):
                 self._maximized = zoomed
                 return zoomed
         except Exception:
-            pass
+            log_exception()
         return super().is_maximized()
 
     def toggle_maximize(self):
@@ -323,7 +323,7 @@ class CocoaBackend(WindowBackend):
                     self._maximized = bool(native.isZoomed())
                     return
             except Exception:
-                pass
+                log_exception()
             WindowBackend.toggle_maximize(self)
 
         self.ui_invoke(fn)
@@ -337,7 +337,7 @@ class CocoaBackend(WindowBackend):
                 if event is not None:
                     ns.performWindowDragWithEvent_(event)
             except Exception:
-                pass
+                log_exception()
         self.ui_invoke(fn)
 
     def ui_invoke(self, fn):
@@ -351,7 +351,7 @@ class CocoaBackend(WindowBackend):
             try:
                 fn()
             except Exception:
-                pass
+                log_exception()
 
     def set_represented_file(self, path):
         window = self.api._window
@@ -368,7 +368,7 @@ class CocoaBackend(WindowBackend):
                 else:
                     native.setRepresentedFilename_("")
             except Exception:
-                pass
+                log_exception()
         self.ui_invoke(fn)
 
 
@@ -387,12 +387,12 @@ def _paths_from_open_docs_event(event):
         try:
             url = desc.fileURLValue()
         except Exception:
-            url = None
+            log_exception()
         text = None
         try:
             text = desc.stringValue()
         except Exception:
-            text = None
+            log_exception()
         if url is not None:
             p = url.path()
             if p:
@@ -412,6 +412,7 @@ def _paths_from_open_docs_event(event):
     try:
         count = int(docs.numberOfItems())
     except Exception:
+        log_exception()
         count = 0
     if count:
         for i in range(1, count + 1):
@@ -422,14 +423,12 @@ def _paths_from_open_docs_event(event):
 
 
 def configure_app_identity():
-    """Name the process Inkwell so AppKit alerts do not say 'python'."""
-    if sys.platform != "darwin":
-        return
+    """把进程名设为 Inkwell，避免 AppKit 弹窗把发起者显示成 python。"""
     try:
         from Foundation import NSProcessInfo
         NSProcessInfo.processInfo().setProcessName_("Inkwell")
     except Exception:
-        pass
+        log_exception()
 
 
 def _dispatch_open_files(paths):
@@ -444,7 +443,7 @@ def _dispatch_open_files(paths):
         try:
             cb(snapshot)
         except Exception:
-            pass
+            log_exception()
 
     run_off_main(work, name="InkwellOpenDocs")
 
@@ -456,11 +455,12 @@ def _paths_from_urls(urls):
             if hasattr(u, "isFileURL") and not u.isFileURL():
                 continue
         except Exception:
-            pass
+            log_exception()
         p = None
         try:
             p = u.path()
         except Exception:
+            log_exception()
             p = str(u) if u else None
         if p:
             paths.append(str(p))
@@ -471,13 +471,13 @@ def _reply_open(app):
     try:
         app.replyToOpenOrPrint_(0)
     except Exception:
-        pass
+        log_exception()
 
 
 def _install_apple_event_handler():
-    """Backup 'odoc' handler. NSApplication may overwrite this; the
-    AppDelegate openURLs/openFile methods are the ones that actually
-    stop NSDocumentController from showing the format error."""
+    """备用的 'odoc' Apple Event 处理器。NSApplication 可能会覆盖这个注册；真正
+    能阻止 NSDocumentController 弹出格式错误提示的是 AppDelegate 的
+    openURLs/openFile 方法。"""
     global _OPEN_DOC_HANDLER
     try:
         from Foundation import NSObject, NSAppleEventManager
@@ -492,6 +492,7 @@ def _install_apple_event_handler():
             try:
                 paths = _paths_from_open_docs_event(event)
             except Exception:
+                log_exception()
                 return
             if paths:
                 _dispatch_open_files(paths)
@@ -514,13 +515,13 @@ def _call_base(base, name, *args):
     try:
         method(*args)
     except Exception:
-        pass
+        log_exception()
 
 
 def _patch_webview_app_delegate():
-    """pywebview's AppDelegate does not implement application:openFile:.
-    With CFBundleDocumentTypes in Info.plist, AppKit then presents
-    'python cannot open files in the Markdown text file format'."""
+    """pywebview 自带的 AppDelegate 没有实现 application:openFile:。Info.plist 里
+    配置了 CFBundleDocumentTypes 后，AppKit 会弹出『python 无法打开 Markdown
+    文本格式的文件』这样的提示。"""
     global _DELEGATE_PATCHED
     if _DELEGATE_PATCHED:
         return
@@ -573,7 +574,7 @@ def _patch_webview_app_delegate():
                 try:
                     return method(self, app)
                 except Exception:
-                    pass
+                    log_exception()
             return True
 
     _orig_will_close = WindowBase.windowWillClose_
@@ -583,7 +584,7 @@ def _patch_webview_app_delegate():
         try:
             _orig_will_close(self, notification)
         except Exception:
-            pass
+            log_exception()
         wake_app_loop()
         _start_exit_watchdog()
 
@@ -601,7 +602,7 @@ def _patch_webview_app_delegate():
                     NSApp.terminate_(None)
                     return
         except Exception:
-            pass
+            log_exception()
         return _orig_keydown(self, event)
 
     HostBase.keyDown_ = keyDown_
@@ -611,10 +612,8 @@ def _patch_webview_app_delegate():
 
 
 def install_open_file_handler(on_files):
-    """Register Finder / Open With handlers. on_files(list[str]) is called
-    when documents are dropped on the app or opened while it is running."""
-    if sys.platform != "darwin":
-        return
+    """注册 Finder / "打开方式" 的处理器：文档被拖到本应用图标上，或应用运行期间
+    再次被打开时，都会调用 on_files(list[str])。"""
     global _OPEN_FILES_CALLBACK
     _OPEN_FILES_CALLBACK = on_files
     configure_app_identity()

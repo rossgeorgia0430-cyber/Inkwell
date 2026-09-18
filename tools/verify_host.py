@@ -8,7 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from inkwell.app import Api, _MAX_DOCUMENT_BYTES, _initial_file
+from inkwell.api import Api
+from inkwell.app import _initial_file
+from inkwell.documents import MAX_DOCUMENT_BYTES
 
 
 def main():
@@ -25,7 +27,7 @@ def main():
             second.write_text("# Second", encoding="utf-8")
             unsupported.write_bytes(b"not markdown")
             with oversized.open("wb") as file:
-                file.seek(_MAX_DOCUMENT_BYTES)
+                file.seek(MAX_DOCUMENT_BYTES)
                 file.write(b"x")
 
             api = Api()

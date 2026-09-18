@@ -6,7 +6,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from inkwell.render import render_markdown, sanitize_html
+from inkwell.render import render_markdown
+from inkwell.sanitize import sanitize_html
 
 
 def main():

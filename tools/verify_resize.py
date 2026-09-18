@@ -22,7 +22,7 @@ import webview
 
 from inkwell import render as R
 from inkwell import server as S
-from inkwell.app import Api
+from inkwell.api import Api
 from inkwell.page import build_page
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -84,7 +84,7 @@ def job(win):
     result = {"steps": []}
     try:
         time.sleep(1.0)
-        api.init_native_chrome()
+        api._init_native_chrome()
         time.sleep(0.2)
         hwnd = win.native.Handle.ToInt32()
 

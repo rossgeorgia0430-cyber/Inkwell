@@ -7,7 +7,7 @@ import sys, os, time, json, ctypes, traceback
 from ctypes import wintypes
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import webview
-from inkwell.app import Api
+from inkwell.api import Api
 from inkwell import render as R, server as S
 from inkwell.page import build_page
 
@@ -65,7 +65,7 @@ def job(win):
     try:
         time.sleep(1.0)
         hwnd = win.native.Handle.ToInt32()
-        api.init_native_chrome()
+        api._init_native_chrome()
         time.sleep(0.3)
         after = _get(hwnd, GWL_STYLE)
         # 永久样式：原生缩放 + Snap 资格
