@@ -70,7 +70,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=ICON if os.path.exists(ICON) else None,
+    icon=ICON,
 )
 
 coll = COLLECT(

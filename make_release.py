@@ -6,6 +6,7 @@ release\\Inkwell-Setup\\，并压缩为 release\\Inkwell-Setup.zip。
 分发包结构：
   Inkwell-Setup\\
     Inkwell\\               <- 程序本体（Inkwell.exe + _internal）
+    common.ps1              <- 三个脚本共用的小工具（Line/Head/Ensure-Key/...）
     install.ps1            <- 安装脚本（完整注册 + WebView2 补装）
     uninstall.ps1          <- 卸载脚本
     cleanup_legacy.ps1     <- 旧版清理（被 install.ps1 调用）
@@ -27,7 +28,7 @@ OUT_DIR = os.path.join(RELEASE, "Inkwell-Setup")
 ZIP_PATH = os.path.join(RELEASE, "Inkwell-Setup.zip")
 
 SCRIPT_FILES = [
-    "install.ps1", "uninstall.ps1", "cleanup_legacy.ps1",
+    "common.ps1", "install.ps1", "uninstall.ps1", "cleanup_legacy.ps1",
     "Install-Inkwell.bat", "Uninstall-Inkwell.bat",
 ]
 
@@ -64,21 +65,23 @@ def main():
         raise SystemExit(f"[X] 未找到载荷 {DIST}\\Inkwell.exe，请先运行 python build.py")
 
     if os.path.isdir(OUT_DIR):
-        shutil.rmtree(OUT_DIR, ignore_errors=True)
+        try:
+            shutil.rmtree(OUT_DIR)
+        except OSError as exc:
+            raise SystemExit(f"[X] 清理旧分发目录 {OUT_DIR} 失败：{exc}")
     os.makedirs(OUT_DIR, exist_ok=True)
 
     # 1) 拷贝程序载荷
     print(f"[*] 拷贝载荷 {DIST} -> {OUT_DIR}\\Inkwell")
     shutil.copytree(DIST, os.path.join(OUT_DIR, "Inkwell"))
 
-    # 2) 拷贝脚本
+    # 2) 拷贝脚本：任何一个缺失都会产出装不了/用不了的坏包，直接失败而不是跳过。
     for name in SCRIPT_FILES:
         src = os.path.join(SCRIPTS, name)
-        if os.path.isfile(src):
-            shutil.copy2(src, os.path.join(OUT_DIR, name))
-            print(f"[*] 脚本 {name}")
-        else:
-            print(f"[!] 缺少脚本 {name}（跳过）")
+        if not os.path.isfile(src):
+            raise SystemExit(f"[X] 缺少脚本 {src}，无法组装分发包。")
+        shutil.copy2(src, os.path.join(OUT_DIR, name))
+        print(f"[*] 脚本 {name}")
 
     # 3) README（UTF-8 BOM，便于记事本中文显示）
     with open(os.path.join(OUT_DIR, "README.txt"), "w", encoding="utf-8-sig") as f:

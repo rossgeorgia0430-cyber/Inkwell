@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Install Inkwell for this Mac: venv + deps + Inkwell.app + optional Launchpad shortcut."""
+"""在本机 macOS 上安装 Inkwell：venv + 依赖 + Inkwell.app，可选创建 Launchpad 快捷方式。"""
 
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -24,24 +25,15 @@ def run(cmd, **kwargs):
 
 
 def find_python():
+    """按 环境变量 PYTHON -> PATH 里的 python3.12 -> PATH 里的 python3 -> 当前解释器 顺序查找。"""
     env = os.environ.get("PYTHON")
     if env:
         return env
-    home_local = Path.home() / ".local" / "bin" / "python3.12"
-    candidates = [
-        home_local,
-        Path.home() / ".local" / "share" / "uv" / "python" / "cpython-3.12-macos-x86_64-none" / "bin" / "python3.12",
-        shutil.which("python3.12"),
-        sys.executable,
-        shutil.which("python3"),
-    ]
-    for c in candidates:
-        if not c:
-            continue
-        p = Path(c)
-        if p.is_file():
-            return str(p)
-    raise SystemExit("未找到可用的 Python 解释器")
+    for name in ("python3.12", "python3"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return sys.executable
 
 
 def create_venv(py):
@@ -58,6 +50,14 @@ def gen_icons():
     run([str(VENV / "bin" / "python"), str(ROOT / "gen_icon.py")], cwd=str(ROOT))
 
 
+def _read_version():
+    text = (ROOT / "inkwell" / "__init__.py").read_text(encoding="utf-8")
+    match = re.search(r'__version__\s*=\s*"([^"]+)"', text)
+    if not match:
+        raise SystemExit("未能从 inkwell/__init__.py 读取版本号")
+    return match.group(1)
+
+
 def write_app_bundle():
     if APP.exists():
         shutil.rmtree(APP)
@@ -66,8 +66,11 @@ def write_app_bundle():
     macos.mkdir(parents=True)
     resources.mkdir(parents=True)
 
+    # Info.plist 模板里的版本号是占位符，安装时换成 inkwell/__init__.py 里的真实版本，
+    # 避免两处版本号各写一份、迟早对不上。
     plist_src = ROOT / "scripts" / "macos" / "Info.plist"
-    shutil.copy2(plist_src, APP / "Contents" / "Info.plist")
+    plist_text = plist_src.read_text(encoding="utf-8").replace("__VERSION__", _read_version())
+    (APP / "Contents" / "Info.plist").write_text(plist_text, encoding="utf-8")
 
     icns = ROOT / "inkwell" / "assets" / "icon.icns"
     png = ROOT / "inkwell" / "assets" / "icon.png"
@@ -82,7 +85,7 @@ def write_app_bundle():
     if clang and stub.is_file():
         run([clang, "-Os", "-o", str(launcher), str(stub)])
     else:
-        # Fallback when a C compiler is unavailable.
+        # 没有 C 编译器时退化为 shell 启动脚本，效果等价。
         launcher.write_text(
             "#!/bin/bash\n"
             "set -euo pipefail\n"

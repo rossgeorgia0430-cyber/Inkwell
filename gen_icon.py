@@ -19,18 +19,12 @@ OUT_PNG = os.path.join(ASSET_DIR, "icon.png")
 OUT_ICNS = os.path.join(ASSET_DIR, "icon.icns")
 
 
-def rounded(draw, box, r, fill):
-    x0, y0, x1, y1 = box
-    draw.rounded_rectangle(box, radius=r, fill=fill)
-
-
 def make(size):
     S = size * 4  # 超采样
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    # 渐变蓝底圆角方块
+    # 陶土色圆角方块，纵向线性渐变（逐行按比例插值）
     pad = int(S * 0.06)
-    # 简单两段竖向渐变
     top = (217, 119, 87)      # #D97757 Anthropic 陶土橘
     bot = (198, 97, 63)       # #C6613F 深陶土（与 --accent 呼应）
     grad = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -48,12 +42,9 @@ def make(size):
 
     # 白色 “M” + 向下箭头（markdown 风格）
     w = (255, 255, 255, 255)
-    cx0 = int(S * 0.22)
     cy0 = int(S * 0.34)
     cy1 = int(S * 0.66)
     stroke = int(S * 0.055)
-    # M 的四个折点
-    mx = [cx0, cx0, int(S * 0.40), int(S * 0.50)]
     # 画 M：左竖、左斜、右斜、右竖
     Mw = int(S * 0.30)
     x_l = int(S * 0.20)
@@ -88,15 +79,12 @@ def write_icns(png_1024):
         "icon_512x512.png": 512,
         "icon_512x512@2x.png": 1024,
     }
-    tmp = tempfile.mkdtemp(prefix="inkwell-iconset-")
-    iconset = os.path.join(tmp, "icon.iconset")
-    os.makedirs(iconset)
-    try:
+    with tempfile.TemporaryDirectory(prefix="inkwell-iconset-") as tmp:
+        iconset = os.path.join(tmp, "icon.iconset")
+        os.makedirs(iconset)
         for name, size in mapping.items():
             png_1024.resize((size, size), Image.LANCZOS).save(os.path.join(iconset, name), format="PNG")
         subprocess.run(["iconutil", "-c", "icns", iconset, "-o", OUT_ICNS], check=True)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
     return True
 
 

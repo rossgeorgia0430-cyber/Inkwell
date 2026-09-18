@@ -10,17 +10,16 @@
 #   - HKCU（当前用户）相关操作无需管理员权限。
 #   - HKLM（本机）相关操作需要管理员权限：请右键 → “以管理员身份运行”。
 #     若非管理员运行，HKLM 部分会被安全跳过并打印警告，不会报错中断。
-#   - 幂等：所有删除均带 Test-Path / -ErrorAction SilentlyContinue 保护，
-#     重复运行不会因“目标已不存在”而报错。
+#   - 幂等：所有删除均带 Test-Path 保护，重复运行不会因“目标已不存在”而报错；
+#     真正执行删除失败时会打印原因，不会中断脚本。
 # =============================================================================
 
-# 探测“可能不存在”的对象时用 SilentlyContinue，保证幂等；
-# 真正执行删除的关键步骤会在局部 try/catch 中临时改为 Stop。
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'common.ps1')
 
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host " Inkwell - 清理旧版 Markdown 阅读器遗留项" -ForegroundColor Cyan
-Write-Host "==================================================" -ForegroundColor Cyan
+Line "==================================================" 'Cyan'
+Line " Inkwell - 清理旧版 Markdown 阅读器遗留项" 'Cyan'
+Line "==================================================" 'Cyan'
 
 # 统计计数器，用于结尾摘要
 $script:CountUninstalled = 0   # 已卸载
@@ -28,8 +27,7 @@ $script:CountRemoved     = 0   # 已删除
 $script:CountSkipped     = 0   # 跳过（需管理员）
 $script:CountNotFound    = 0   # 未找到
 
-# 检测当前是否以管理员身份运行
-$IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+$IsAdmin = Test-Admin
 if ($IsAdmin) {
     Write-Host "[信息] 当前为管理员会话：将尝试清理 HKLM 项。" -ForegroundColor DarkGray
 } else {
@@ -37,71 +35,67 @@ if ($IsAdmin) {
 }
 
 # -----------------------------------------------------------------------------
-# 辅助函数：删除文件夹
+# 删除一个遗留文件/目录/注册表键：三者对 Remove-Item 而言操作等价
+# （-Recurse 对非容器项是无害的空操作），只有提示文案里要不要点出“注册表键”不同。
 # -----------------------------------------------------------------------------
-function Remove-LegacyFolder {
+function Remove-LegacyItem {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [string]$Label = $Path
+        [string]$Label = $Path,
+        [string]$Kind = ''   # 传 '注册表键' 会在提示里点出这是注册表键
     )
+    $desc = if ($Kind) { "$Kind $Label" } else { $Label }
+    $verb = if ($Kind) { "无法删除$Kind" } else { '无法删除' }
     if (Test-Path -LiteralPath $Path) {
         try {
-            $ErrorActionPreference = 'Stop'
             Remove-Item -LiteralPath $Path -Recurse -Force
-            Write-Host "[已删除] $Label" -ForegroundColor Green
+            Write-Host "[已删除] $desc" -ForegroundColor Green
             $script:CountRemoved++
         } catch {
-            Write-Host "[失败]   无法删除 $Label : $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "[失败]   $verb $Label : $($_.Exception.Message)" -ForegroundColor Yellow
         }
     } else {
-        Write-Host "[未找到] $Label" -ForegroundColor DarkGray
+        Write-Host "[未找到] $desc" -ForegroundColor DarkGray
         $script:CountNotFound++
     }
 }
 
 # -----------------------------------------------------------------------------
-# 辅助函数：删除文件（如快捷方式）
+# 清空一个扩展名的默认关联，如果它仍指向某个旧 ProgId。
+# HKCU 与 HKLM 下的处理逻辑完全一样，只是根键、旧 ProgId 名字、提示文案前缀不同；
+# HKLM 失败大概率是权限不足（未以管理员运行），按“跳过”而非“失败”计数。
 # -----------------------------------------------------------------------------
-function Remove-LegacyFile {
+function Clear-LegacyExtensionDefault {
     param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [string]$Label = $Path
+        [Parameter(Mandatory = $true)][string]$ClassesRoot,
+        [Parameter(Mandatory = $true)][string]$OldProgId,
+        [string]$Prefix = '',
+        [switch]$RequiresAdmin
     )
-    if (Test-Path -LiteralPath $Path) {
+    foreach ($ext in @('.md', '.markdown')) {
+        $extKey = "$ClassesRoot\$ext"
+        if (-not (Test-Path -LiteralPath $extKey)) {
+            Write-Host "[未找到] $extKey" -ForegroundColor DarkGray
+            $script:CountNotFound++
+            continue
+        }
+        $def = (Get-ItemProperty -LiteralPath $extKey -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
+        if ($def -ne $OldProgId) {
+            Write-Host "[跳过]   $Prefix$ext 默认值为 '$def'（非旧 ProgId，保持不变）" -ForegroundColor DarkGray
+            continue
+        }
         try {
-            $ErrorActionPreference = 'Stop'
-            Remove-Item -LiteralPath $Path -Force
-            Write-Host "[已删除] $Label" -ForegroundColor Green
+            Set-ItemProperty -LiteralPath $extKey -Name '(default)' -Value '' -Force
+            Write-Host "[已删除] $Prefix$ext 的过期默认关联（原 $OldProgId）" -ForegroundColor Green
             $script:CountRemoved++
         } catch {
-            Write-Host "[失败]   无法删除 $Label : $($_.Exception.Message)" -ForegroundColor Yellow
+            if ($RequiresAdmin) {
+                Write-Host "[跳过(需管理员)] 清理 $Prefix$ext 失败：$($_.Exception.Message)" -ForegroundColor Yellow
+                $script:CountSkipped++
+            } else {
+                Write-Host "[失败]   清理 $ext 默认值失败：$($_.Exception.Message)" -ForegroundColor Yellow
+            }
         }
-    } else {
-        Write-Host "[未找到] $Label" -ForegroundColor DarkGray
-        $script:CountNotFound++
-    }
-}
-
-# -----------------------------------------------------------------------------
-# 辅助函数：删除整个注册表键
-# -----------------------------------------------------------------------------
-function Remove-LegacyRegKey {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [string]$Label = $Path
-    )
-    if (Test-Path -LiteralPath $Path) {
-        try {
-            $ErrorActionPreference = 'Stop'
-            Remove-Item -LiteralPath $Path -Recurse -Force
-            Write-Host "[已删除] 注册表键 $Label" -ForegroundColor Green
-            $script:CountRemoved++
-        } catch {
-            Write-Host "[失败]   无法删除注册表键 $Label : $($_.Exception.Message)" -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host "[未找到] 注册表键 $Label" -ForegroundColor DarkGray
-        $script:CountNotFound++
     }
 }
 
@@ -109,8 +103,7 @@ function Remove-LegacyRegKey {
 # 1) 旧 Inno-Setup 安装目录（MarkdownReader，~177MB）
 #    优先走干净卸载：若存在 unins000.exe 则静默卸载，残留再强删。
 # =============================================================================
-Write-Host ""
-Write-Host "--- [1/6] 旧安装目录 MarkdownReader ---" -ForegroundColor White
+Head '[1/6] 旧安装目录 MarkdownReader'
 
 $mrDir   = Join-Path $env:LOCALAPPDATA "Programs\MarkdownReader"
 $mrUnins = Join-Path $mrDir "unins000.exe"
@@ -118,7 +111,6 @@ $mrUnins = Join-Path $mrDir "unins000.exe"
 if (Test-Path -LiteralPath $mrDir) {
     if (Test-Path -LiteralPath $mrUnins) {
         try {
-            $ErrorActionPreference = 'Stop'
             Write-Host "[执行]   运行卸载程序 unins000.exe /VERYSILENT ..." -ForegroundColor DarkGray
             Start-Process -FilePath $mrUnins -ArgumentList '/VERYSILENT', '/NORESTART' -Wait
             Write-Host "[已卸载] MarkdownReader（通过 unins000.exe）" -ForegroundColor Green
@@ -131,7 +123,7 @@ if (Test-Path -LiteralPath $mrDir) {
     }
     # 卸载后若目录仍残留，强制删除
     if (Test-Path -LiteralPath $mrDir) {
-        Remove-LegacyFolder -Path $mrDir -Label "残留目录 $mrDir"
+        Remove-LegacyItem -Path $mrDir -Label "残留目录 $mrDir"
     } else {
         Write-Host "[信息]   目录已被卸载程序清除。" -ForegroundColor DarkGray
     }
@@ -143,19 +135,17 @@ if (Test-Path -LiteralPath $mrDir) {
 # =============================================================================
 # 2) 旧 Qt 缓存目录（基本为空）
 # =============================================================================
-Write-Host ""
-Write-Host "--- [2/6] 旧 Qt 缓存目录 MarkdownReader-Desktop ---" -ForegroundColor White
+Head '[2/6] 旧 Qt 缓存目录 MarkdownReader-Desktop'
 $mrDesktop = Join-Path $env:LOCALAPPDATA "MarkdownReader-Desktop"
-Remove-LegacyFolder -Path $mrDesktop -Label $mrDesktop
+Remove-LegacyItem -Path $mrDesktop -Label $mrDesktop
 
 # =============================================================================
 # 3) 开始菜单快捷方式
 # =============================================================================
-Write-Host ""
-Write-Host "--- [3/6] 开始菜单快捷方式 ---" -ForegroundColor White
+Head '[3/6] 开始菜单快捷方式'
 $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
-Remove-LegacyFile -Path (Join-Path $startMenu "MarkdownReader.lnk")      -Label "开始菜单 MarkdownReader.lnk"
-Remove-LegacyFile -Path (Join-Path $startMenu "卸载 MarkdownReader.lnk") -Label "开始菜单 卸载 MarkdownReader.lnk"
+Remove-LegacyItem -Path (Join-Path $startMenu "MarkdownReader.lnk")      -Label "开始菜单 MarkdownReader.lnk"
+Remove-LegacyItem -Path (Join-Path $startMenu "卸载 MarkdownReader.lnk") -Label "开始菜单 卸载 MarkdownReader.lnk"
 
 # =============================================================================
 # 4) HKCU 注册表：旧 ProgId 与文件关联
@@ -164,42 +154,19 @@ Remove-LegacyFile -Path (Join-Path $startMenu "卸载 MarkdownReader.lnk") -Labe
 #      注意：install.ps1 会把 .md/.markdown 重新指向 Inkwell.Markdown，
 #      因此这里只需移除过期的 ProgId 默认值即可。
 # =============================================================================
-Write-Host ""
-Write-Host "--- [4/6] HKCU 旧 ProgId / 文件关联 ---" -ForegroundColor White
+Head '[4/6] HKCU 旧 ProgId / 文件关联'
 
 # 4a) 删除旧 ProgId 整键
-Remove-LegacyRegKey -Path "HKCU:\Software\Classes\MarkdownReader.Document" -Label "HKCU\...\MarkdownReader.Document"
+Remove-LegacyItem -Path "HKCU:\Software\Classes\MarkdownReader.Document" -Label "HKCU\...\MarkdownReader.Document" -Kind '注册表键'
 
 # 4b) 若 .md 默认值 == MarkdownReader.Document，则清空该过期默认值
-foreach ($ext in @('.md', '.markdown')) {
-    $extKey = "HKCU:\Software\Classes\$ext"
-    if (Test-Path -LiteralPath $extKey) {
-        $def = (Get-ItemProperty -LiteralPath $extKey -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
-        if ($def -eq 'MarkdownReader.Document') {
-            try {
-                $ErrorActionPreference = 'Stop'
-                # 把默认值置空（保留键本身，install.ps1 会重新写入 Inkwell.Markdown）
-                Set-ItemProperty -LiteralPath $extKey -Name '(default)' -Value '' -Force
-                Write-Host "[已删除] $ext 的过期默认关联（原 MarkdownReader.Document）" -ForegroundColor Green
-                $script:CountRemoved++
-            } catch {
-                Write-Host "[失败]   清理 $ext 默认值失败：$($_.Exception.Message)" -ForegroundColor Yellow
-            }
-        } else {
-            Write-Host "[跳过]   $ext 默认值为 '$def'（非旧 ProgId，保持不变）" -ForegroundColor DarkGray
-        }
-    } else {
-        Write-Host "[未找到] $extKey" -ForegroundColor DarkGray
-        $script:CountNotFound++
-    }
-}
+Clear-LegacyExtensionDefault -ClassesRoot 'HKCU:\Software\Classes' -OldProgId 'MarkdownReader.Document'
 
 # =============================================================================
 # 5) HKLM 注册表：旧 ProgId MDReader.Document 与 .md/.markdown 默认关联
 #    需要管理员权限，整体 try/catch；无权限时优雅跳过并打印警告。
 # =============================================================================
-Write-Host ""
-Write-Host "--- [5/6] HKLM 旧 ProgId / 文件关联（需管理员）---" -ForegroundColor White
+Head '[5/6] HKLM 旧 ProgId / 文件关联（需管理员）'
 
 if (-not $IsAdmin) {
     Write-Host "[跳过(需管理员)] HKLM 清理：当前非管理员会话。" -ForegroundColor Yellow
@@ -210,7 +177,6 @@ if (-not $IsAdmin) {
     $hklmProg = "HKLM:\SOFTWARE\Classes\MDReader.Document"
     if (Test-Path -LiteralPath $hklmProg) {
         try {
-            $ErrorActionPreference = 'Stop'
             Remove-Item -LiteralPath $hklmProg -Recurse -Force
             Write-Host "[已删除] 注册表键 HKLM\SOFTWARE\Classes\MDReader.Document" -ForegroundColor Green
             $script:CountRemoved++
@@ -224,40 +190,18 @@ if (-not $IsAdmin) {
     }
 
     # 5b) 若 HKLM .md/.markdown 默认值 == MDReader.Document，则清空
-    foreach ($ext in @('.md', '.markdown')) {
-        $hklmExt = "HKLM:\SOFTWARE\Classes\$ext"
-        if (Test-Path -LiteralPath $hklmExt) {
-            $def = (Get-ItemProperty -LiteralPath $hklmExt -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
-            if ($def -eq 'MDReader.Document') {
-                try {
-                    $ErrorActionPreference = 'Stop'
-                    Set-ItemProperty -LiteralPath $hklmExt -Name '(default)' -Value '' -Force
-                    Write-Host "[已删除] HKLM $ext 的过期默认关联（原 MDReader.Document）" -ForegroundColor Green
-                    $script:CountRemoved++
-                } catch {
-                    Write-Host "[跳过(需管理员)] 清理 HKLM $ext 失败：$($_.Exception.Message)" -ForegroundColor Yellow
-                    $script:CountSkipped++
-                }
-            } else {
-                Write-Host "[跳过]   HKLM $ext 默认值为 '$def'（非旧 ProgId，保持不变）" -ForegroundColor DarkGray
-            }
-        } else {
-            Write-Host "[未找到] $hklmExt" -ForegroundColor DarkGray
-            $script:CountNotFound++
-        }
-    }
+    Clear-LegacyExtensionDefault -ClassesRoot 'HKLM:\SOFTWARE\Classes' -OldProgId 'MDReader.Document' -Prefix 'HKLM ' -RequiresAdmin
 }
 
 # =============================================================================
 # 6) 旧工具的临时资源目录
 # =============================================================================
-Write-Host ""
-Write-Host "--- [6/6] 临时资源目录 mdreader_assets_* ---" -ForegroundColor White
+Head '[6/6] 临时资源目录 mdreader_assets_*'
 $tmpPattern = Join-Path $env:TEMP "mdreader_assets_*"
 $tmpDirs = Get-ChildItem -Path $tmpPattern -Directory -ErrorAction SilentlyContinue
 if ($tmpDirs) {
     foreach ($d in $tmpDirs) {
-        Remove-LegacyFolder -Path $d.FullName -Label "临时目录 $($d.FullName)"
+        Remove-LegacyItem -Path $d.FullName -Label "临时目录 $($d.FullName)"
     }
 } else {
     Write-Host "[未找到] $tmpPattern" -ForegroundColor DarkGray
@@ -267,14 +211,14 @@ if ($tmpDirs) {
 # =============================================================================
 # 摘要
 # =============================================================================
-Write-Host ""
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host " 清理完成 - 摘要" -ForegroundColor Cyan
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host (" 已卸载        : {0}" -f $script:CountUninstalled) -ForegroundColor Green
-Write-Host (" 已删除        : {0}" -f $script:CountRemoved)     -ForegroundColor Green
-Write-Host (" 跳过(需管理员): {0}" -f $script:CountSkipped)     -ForegroundColor Yellow
-Write-Host (" 未找到        : {0}" -f $script:CountNotFound)    -ForegroundColor DarkGray
-Write-Host "--------------------------------------------------" -ForegroundColor Cyan
-Write-Host " 注意：未触碰 VSCode.markdown 或任何未列出的应用。" -ForegroundColor DarkGray
-Write-Host "==================================================" -ForegroundColor Cyan
+Line "" 'Cyan'
+Line "==================================================" 'Cyan'
+Line " 清理完成 - 摘要" 'Cyan'
+Line "==================================================" 'Cyan'
+Line (" 已卸载        : {0}" -f $script:CountUninstalled) 'Green'
+Line (" 已删除        : {0}" -f $script:CountRemoved)     'Green'
+Line (" 跳过(需管理员): {0}" -f $script:CountSkipped)     'Yellow'
+Line (" 未找到        : {0}" -f $script:CountNotFound)    'DarkGray'
+Line "--------------------------------------------------" 'Cyan'
+Line " 注意：未触碰 VSCode.markdown 或任何未列出的应用。" 'DarkGray'
+Line "==================================================" 'Cyan'

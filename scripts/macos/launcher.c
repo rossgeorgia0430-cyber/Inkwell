@@ -1,5 +1,5 @@
-/* Inkwell.app Mach-O stub: exec the venv Python as -m inkwell.
-   Resolves repo root as ../../../ from Contents/MacOS/Inkwell. */
+/* Inkwell.app 的 Mach-O 启动桩：用 venv 里的 Python 以 -m inkwell 方式执行。
+   从 Contents/MacOS/Inkwell 出发，仓库根目录是它的上四级目录。 */
 #include <libgen.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
@@ -18,7 +18,7 @@ static int repo_root(char *out, size_t n) {
     if (!realpath(path, real)) {
         return -1;
     }
-    /* $ROOT/Inkwell.app/Contents/MacOS/Inkwell → strip 4 components */
+    /* $ROOT/Inkwell.app/Contents/MacOS/Inkwell → 去掉末尾 4 段路径 */
     char *p = real;
     for (int i = 0; i < 4; i++) {
         char *slash = strrchr(p, '/');
@@ -48,9 +48,6 @@ int main(int argc, char **argv) {
         perror("setenv");
         return 1;
     }
-    /* Clash mixed-port 403s loopback; keep the local page server off the proxy. */
-    setenv("NO_PROXY", "127.0.0.1,localhost,::1", 0);
-    setenv("no_proxy", "127.0.0.1,localhost,::1", 0);
 
     char py[PATH_MAX];
     if (snprintf(py, sizeof(py), "%s/.venv/bin/python", root) >= (int)sizeof(py)) {

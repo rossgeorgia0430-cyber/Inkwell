@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove the local macOS app bundle, Launchpad symlink, and CLI shim."""
+"""移除本机 macOS 上的应用包、Launchpad 快捷方式与命令行入口。"""
 
 import shutil
 import sys

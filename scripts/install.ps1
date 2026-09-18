@@ -25,7 +25,8 @@ param(
     [switch]$Quiet                # 安装完成后不自动打开“默认应用”设置
 )
 
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'common.ps1')
 
 # ---- 固定参数 ---------------------------------------------------------------
 $AppName  = 'Inkwell'
@@ -36,9 +37,6 @@ $AppDesc  = 'Inkwell - 本地 Markdown 阅读器'
 $Target   = Join-Path $env:LOCALAPPDATA 'Programs\Inkwell'
 $Exts     = @('.md', '.markdown', '.mdown', '.mkd')
 $BackupRoot = 'HKCU:\Software\Inkwell\AssociationBackup'
-
-function Line($t, $c = 'Gray') { Write-Host $t -ForegroundColor $c }
-function Head($t) { Write-Host ""; Line "--- $t ---" 'White' }
 
 Line "==================================================" 'Cyan'
 Line " 安装 Inkwell - Markdown 阅读器" 'Cyan'
@@ -93,7 +91,6 @@ if ($SkipWebView2) {
     Line "[!]      未检测到 WebView2 运行时，尝试联网静默补装…" 'Yellow'
     $setup = Join-Path $env:TEMP 'MicrosoftEdgeWebview2Setup.exe'
     try {
-        $ErrorActionPreference = 'Stop'
         Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $setup -UseBasicParsing
         $p = Start-Process -FilePath $setup -ArgumentList '/silent', '/install' -Wait -PassThru
         Start-Sleep -Milliseconds 800
@@ -106,8 +103,6 @@ if ($SkipWebView2) {
         Line "[警告]   WebView2 自动补装失败：$($_.Exception.Message)" 'Yellow'
         Line "         （可能离线/受代理限制。）请手动安装运行时后重试：" 'Yellow'
         Line "         https://developer.microsoft.com/microsoft-edge/webview2/" 'Yellow'
-    } finally {
-        $ErrorActionPreference = 'SilentlyContinue'
     }
 }
 
@@ -117,8 +112,12 @@ if ($SkipWebView2) {
 Head '[2/8] 清理旧版遗留项'
 $cleanup = Join-Path $PSScriptRoot 'cleanup_legacy.ps1'
 if (Test-Path -LiteralPath $cleanup) {
-    & $cleanup
-    Line "[OK]     旧版清理流程结束。" 'Green'
+    try {
+        & $cleanup
+        Line "[OK]     旧版清理流程结束。" 'Green'
+    } catch {
+        Line "[警告]   旧版清理流程出错，已跳过：$($_.Exception.Message)" 'Yellow'
+    }
 } else {
     Line "[跳过]   未找到 cleanup_legacy.ps1。" 'DarkGray'
 }
@@ -128,7 +127,6 @@ if (Test-Path -LiteralPath $cleanup) {
 # =============================================================================
 Head '[3/8] 复制到安装目录'
 try {
-    $ErrorActionPreference = 'Stop'
     if (Test-Path -LiteralPath $Target) {
         # 先尝试关闭正在运行的旧实例，避免占用
         Get-Process -Name 'Inkwell' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -143,8 +141,6 @@ try {
 } catch {
     Line "[错误]   复制失败：$($_.Exception.Message)" 'Red'
     exit 1
-} finally {
-    $ErrorActionPreference = 'SilentlyContinue'
 }
 
 $exe = Join-Path $Target $ExeName
@@ -155,8 +151,6 @@ if (-not (Test-Path -LiteralPath $exe)) { Line "[错误]   复制后未找到 $e
 # =============================================================================
 Head '[4/8] 注册文件关联（完整应用注册）'
 
-function Ensure-Key($p) { if (-not (Test-Path -LiteralPath $p)) { New-Item -Path $p -Force | Out-Null } }
-function Set-Default($p, $v) { Ensure-Key $p; Set-ItemProperty -LiteralPath $p -Name '(default)' -Value $v -Force }
 function Save-ExtensionDefault($ext) {
     # 只在首次安装时记录；升级不能覆盖最初的安装前状态。
     $name = $ext.TrimStart('.')
@@ -181,8 +175,6 @@ $C   = 'HKCU:\Software\Classes'
 $cmd = ('"{0}" "%1"' -f $exe)
 
 try {
-    $ErrorActionPreference = 'Stop'
-
     # A) ProgId：类、友好类型名、图标、open 动词
     Set-Default "$C\$ProgId" 'Markdown 文档'
     Set-ItemProperty -LiteralPath "$C\$ProgId" -Name 'FriendlyTypeName' -Value 'Markdown 文档' -Force
@@ -219,8 +211,6 @@ try {
     Line "[OK]     已注册为 Markdown 候选应用；未改写用户现有默认应用。" 'Green'
 } catch {
     Line "[错误]   注册失败：$($_.Exception.Message)" 'Red'
-} finally {
-    $ErrorActionPreference = 'SilentlyContinue'
 }
 
 # =============================================================================
@@ -228,16 +218,10 @@ try {
 # =============================================================================
 Head '[5/8] 通知 Shell 刷新关联'
 try {
-    if (-not ('Inkwell.Shell32Native' -as [type])) {
-        Add-Type -Namespace 'Inkwell' -Name 'Shell32Native' -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("shell32.dll")]
-public static extern void SHChangeNotify(int wEventId, uint uFlags, System.IntPtr dwItem1, System.IntPtr dwItem2);
-'@
-    }
-    [Inkwell.Shell32Native]::SHChangeNotify(0x08000000, 0x1000, [IntPtr]::Zero, [IntPtr]::Zero)
+    Send-ShellChangeNotify
     Line "[OK]     已通知 Shell（SHCNE_ASSOCCHANGED）。" 'Green'
 } catch {
-    Line "[警告]   SHChangeNotify 失败（不影响功能）。" 'Yellow'
+    Line "[警告]   SHChangeNotify 失败（不影响功能）：$($_.Exception.Message)" 'Yellow'
 }
 
 # =============================================================================
@@ -272,13 +256,11 @@ if ($NoShortcut) {
 # 7) （可选）写组策略 XML 以免点击强制默认（需管理员；托管机器才可靠）
 # =============================================================================
 Head '[7/8] 永久默认（可选 / 组策略）'
-function Test-Admin { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator) }
 if ($SetDefaultViaPolicy) {
     if (-not (Test-Admin)) {
         Line "[跳过]   -SetDefaultViaPolicy 需要管理员权限。" 'Yellow'
     } else {
         try {
-            $ErrorActionPreference = 'Stop'
             $xmlPath = Join-Path $env:ProgramData 'Inkwell\DefaultAssoc.xml'
             $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System'
             $existingPolicy = (Get-ItemProperty -LiteralPath $pol -Name 'DefaultAssociationsConfiguration' -ErrorAction SilentlyContinue).DefaultAssociationsConfiguration
@@ -295,7 +277,7 @@ if ($SetDefaultViaPolicy) {
             Line "         注意：独立（非域/非 MDM）机器组策略可能不处理此项。" 'DarkGray'
         } catch {
             Line "[警告]   写组策略失败：$($_.Exception.Message)" 'Yellow'
-        } finally { $ErrorActionPreference = 'SilentlyContinue' }
+        }
     }
 } else {
     Line "[跳过]   未指定 -SetDefaultViaPolicy（独立机器推荐用下方一键确认）。" 'DarkGray'

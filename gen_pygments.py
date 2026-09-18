@@ -92,15 +92,14 @@ class InkwellDarkStyle(Style):
     }
 
 
-def gen(style, filename, label=None):
+def gen(style, filename, label):
     fmt = HtmlFormatter(style=style, cssclass="codehilite")
     css = fmt.get_style_defs(".codehilite")
-    style_label = label or str(style)
-    header = f"/* pygments style: {style_label} (scope .codehilite) */\n"
+    header = f"/* pygments style: {label} (scope .codehilite) */\n"
     path = os.path.join(OUT, filename)
     with open(path, "w", encoding="utf-8") as f:
         f.write(header + css + "\n")
-    print(f"wrote {path}  (style={style_label})")
+    print(f"wrote {path}  (style={label})")
 
 
 if __name__ == "__main__":

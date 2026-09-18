@@ -5,7 +5,6 @@ Inkwell 打包脚本：调用 PyInstaller 按 Inkwell.spec 生成 onedir 产物�
 """
 import os
 import sys
-import glob
 import shutil
 import subprocess
 
@@ -28,7 +27,12 @@ def clean():
     for d in ("build", "dist"):
         path = os.path.join(ROOT, d)
         if os.path.isdir(path):
-            shutil.rmtree(path, ignore_errors=True)
+            try:
+                shutil.rmtree(path)
+            except OSError as exc:
+                print(f"[build] 清理 {path} 失败 [X]：{exc}")
+                print("[build] 常见原因：Inkwell.exe 仍在运行占用了产物目录，请先关闭后重试。")
+                sys.exit(1)
 
 
 def build():
@@ -62,27 +66,19 @@ def verify():
         if not found:
             ok = False
 
-    # 资源
-    assets = os.path.join(DIST, "_internal", "inkwell", "assets")
-    if not os.path.isdir(assets):
-        # onedir 下 datas 可能直接在根或 _internal
-        alt = glob.glob(os.path.join(DIST, "**", "inkwell", "assets"), recursive=True)
-        assets = alt[0] if alt else assets
-    for need in (
-        "app.css",
-        "app.js",
-        "icon.ico",
-        "katex/katex.min.css",
-        "katex/katex.min.js",
-        "mermaid/mermaid.min.js",
-        "pygments-light.css",
-        "pygments-dark.css",
-    ):
-        p = os.path.join(assets, need.replace("/", os.sep))
-        found = os.path.isfile(p) and os.path.getsize(p) > 0
-        print(f"[verify] assets/{need}: {'[OK]' if found else '[X]'}")
-        if not found:
-            ok = False
+    # 资源：以源码 inkwell/assets 目录树为准，逐个核对打包产物下同名文件存在且大小一致，
+    # 这样前端资源拆分/改名后清单会自动跟上，不需要在这里同步维护一份硬编码列表。
+    src_assets = os.path.join(ROOT, "inkwell", "assets")
+    dist_assets = os.path.join(DIST, "_internal", "inkwell", "assets")
+    for root, _dirs, files in os.walk(src_assets):
+        for name in files:
+            src_path = os.path.join(root, name)
+            rel = os.path.relpath(src_path, src_assets)
+            dist_path = os.path.join(dist_assets, rel)
+            found = os.path.isfile(dist_path) and os.path.getsize(dist_path) == os.path.getsize(src_path)
+            print(f"[verify] assets/{rel.replace(os.sep, '/')}: {'[OK]' if found else '[X]'}")
+            if not found:
+                ok = False
     return ok
 
 

@@ -17,7 +17,8 @@
 [CmdletBinding()]
 param([switch]$RemovePolicy)
 
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'common.ps1')
 
 $ProgId  = 'Inkwell.Markdown'
 $ExeName = 'Inkwell.exe'
@@ -28,12 +29,14 @@ $Exts    = @('.md', '.markdown', '.mdown', '.mkd')
 $BackupRoot = 'HKCU:\Software\Inkwell\AssociationBackup'
 
 $removed = 0
-function Line($t, $c = 'Gray') { Write-Host $t -ForegroundColor $c }
 function KillKey($p) {
     if (Test-Path -LiteralPath $p) {
-        Remove-Item -LiteralPath $p -Recurse -Force
-        if (-not (Test-Path -LiteralPath $p)) { Line "[删] $p" 'Green'; $script:removed++ }
-        else { Line "[失败] $p" 'Yellow' }
+        try {
+            Remove-Item -LiteralPath $p -Recurse -Force
+            Line "[删] $p" 'Green'; $script:removed++
+        } catch {
+            Line "[失败] $p : $($_.Exception.Message)" 'Yellow'
+        }
     } else { Line "[无] $p" 'DarkGray' }
 }
 
@@ -45,52 +48,75 @@ Line "==================================================" 'Cyan'
 Get-Process -Name 'Inkwell' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 
-Line ""; Line "--- [1/5] 删除注册表键 ---" 'White'
+Head '[1/5] 删除注册表键'
 KillKey "$C\$ProgId"
 KillKey "$C\Applications\$ExeName"
 $registered = (Get-ItemProperty -LiteralPath 'HKCU:\Software\RegisteredApplications' -Name $Friendly -ErrorAction SilentlyContinue).$Friendly
 if ($registered -eq 'Software\Inkwell\Capabilities') {
-    Remove-ItemProperty -LiteralPath 'HKCU:\Software\RegisteredApplications' -Name $Friendly -Force
-    Line "[删] RegisteredApplications\$Friendly" 'Green'; $removed++
+    try {
+        Remove-ItemProperty -LiteralPath 'HKCU:\Software\RegisteredApplications' -Name $Friendly -Force
+        Line "[删] RegisteredApplications\$Friendly" 'Green'; $removed++
+    } catch {
+        Line "[失败] RegisteredApplications\$Friendly : $($_.Exception.Message)" 'Yellow'
+    }
 }
 
-Line ""; Line "--- [2/5] 清理扩展名关联 ---" 'White'
+Head '[2/5] 清理扩展名关联'
 foreach ($e in $Exts) {
     $owp = "$C\$e\OpenWithProgids"
     if (Get-ItemProperty -LiteralPath $owp -Name $ProgId -ErrorAction SilentlyContinue) {
-        Remove-ItemProperty -LiteralPath $owp -Name $ProgId -Force
-        Line "[删] $e\OpenWithProgids\$ProgId" 'Green'; $removed++
+        try {
+            Remove-ItemProperty -LiteralPath $owp -Name $ProgId -Force
+            Line "[删] $e\OpenWithProgids\$ProgId" 'Green'; $removed++
+        } catch {
+            Line "[失败] $e\OpenWithProgids\$ProgId : $($_.Exception.Message)" 'Yellow'
+        }
     }
     $def = (Get-ItemProperty -LiteralPath "$C\$e" -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
     if ($def -eq $ProgId) {
         $backup = "$BackupRoot\$($e.TrimStart('.'))"
         $saved = Get-ItemProperty -LiteralPath $backup -ErrorAction SilentlyContinue
-        if ($saved -and $saved.HadDefault -eq 1 -and $saved.Value -ne $ProgId) {
-            Set-ItemProperty -LiteralPath "$C\$e" -Name '(default)' -Value ([string]$saved.Value) -Force
-            Line "[恢复] $e 默认值 -> $($saved.Value)" 'Green'; $removed++
-        } else {
-            # 没有旧默认值，或旧安装未留下可用备份：只移除明确属于 Inkwell 的值。
-            Remove-ItemProperty -LiteralPath "$C\$e" -Name '(default)' -Force
-            Line "[删] $e 的 Inkwell 默认值" 'Green'; $removed++
+        try {
+            if ($saved -and $saved.HadDefault -eq 1 -and $saved.Value -ne $ProgId) {
+                Set-ItemProperty -LiteralPath "$C\$e" -Name '(default)' -Value ([string]$saved.Value) -Force
+                Line "[恢复] $e 默认值 -> $($saved.Value)" 'Green'; $removed++
+            } else {
+                # 没有旧默认值，或旧安装未留下可用备份：只移除明确属于 Inkwell 的值。
+                Remove-ItemProperty -LiteralPath "$C\$e" -Name '(default)' -Force
+                Line "[删] $e 的 Inkwell 默认值" 'Green'; $removed++
+            }
+        } catch {
+            Line "[失败] $e 默认值处理 : $($_.Exception.Message)" 'Yellow'
         }
     }
 }
 KillKey 'HKCU:\Software\Inkwell'
 
-Line ""; Line "--- [3/5] 删除快捷方式 ---" 'White'
+Head '[3/5] 删除快捷方式'
 $lnks = @(
     (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Inkwell.lnk'),
     (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Inkwell.lnk')
 )
 foreach ($l in $lnks) {
-    if (Test-Path -LiteralPath $l) { Remove-Item -LiteralPath $l -Force; Line "[删] $l" 'Green'; $removed++ }
+    if (Test-Path -LiteralPath $l) {
+        try {
+            Remove-Item -LiteralPath $l -Force
+            Line "[删] $l" 'Green'; $removed++
+        } catch {
+            Line "[失败] $l : $($_.Exception.Message)" 'Yellow'
+        }
+    }
 }
 
-Line ""; Line "--- [4/5] 删除安装目录 ---" 'White'
+Head '[4/5] 删除安装目录'
 if (Test-Path -LiteralPath $Target) {
-    Remove-Item -LiteralPath $Target -Recurse -Force
-    if (Test-Path -LiteralPath $Target) { Line "[失败] 目录被占用，请关闭 Inkwell 后重试：$Target" 'Yellow' }
-    else { Line "[删] $Target" 'Green'; $removed++ }
+    try {
+        Remove-Item -LiteralPath $Target -Recurse -Force
+        Line "[删] $Target" 'Green'; $removed++
+    } catch {
+        # 目录很可能被正在运行的 Inkwell.exe 占用；把异常信息一并打出来，比只说“失败”更好定位。
+        Line "[失败] 目录被占用，请关闭 Inkwell 后重试：$Target（$($_.Exception.Message)）" 'Yellow'
+    }
 } else { Line "[无] $Target" 'DarkGray' }
 
 if ($RemovePolicy) {
@@ -98,23 +124,23 @@ if ($RemovePolicy) {
     $cur = (Get-ItemProperty -LiteralPath $pol -Name 'DefaultAssociationsConfiguration' -ErrorAction SilentlyContinue).DefaultAssociationsConfiguration
     $ownedPolicy = Join-Path $env:ProgramData 'Inkwell\DefaultAssoc.xml'
     if ($cur -and $cur -eq $ownedPolicy) {
-        Remove-ItemProperty -LiteralPath $pol -Name 'DefaultAssociationsConfiguration' -Force
-        Remove-Item -LiteralPath (Split-Path $ownedPolicy -Parent) -Recurse -Force
-        Line "[删] HKLM 组策略 DefaultAssociationsConfiguration" 'Green'; $removed++
+        try {
+            Remove-ItemProperty -LiteralPath $pol -Name 'DefaultAssociationsConfiguration' -Force
+            Remove-Item -LiteralPath (Split-Path $ownedPolicy -Parent) -Recurse -Force
+            Line "[删] HKLM 组策略 DefaultAssociationsConfiguration" 'Green'; $removed++
+        } catch {
+            Line "[失败] 清理 HKLM 组策略失败（可能需要管理员权限）：$($_.Exception.Message)" 'Yellow'
+        }
     }
 }
 
-Line ""; Line "--- [5/5] 通知 Shell 刷新 ---" 'White'
+Head '[5/5] 通知 Shell 刷新'
 try {
-    if (-not ('Inkwell.Shell32Native' -as [type])) {
-        Add-Type -Namespace 'Inkwell' -Name 'Shell32Native' -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("shell32.dll")]
-public static extern void SHChangeNotify(int wEventId, uint uFlags, System.IntPtr dwItem1, System.IntPtr dwItem2);
-'@
-    }
-    [Inkwell.Shell32Native]::SHChangeNotify(0x08000000, 0x1000, [IntPtr]::Zero, [IntPtr]::Zero)
+    Send-ShellChangeNotify
     Line "[OK] 已通知 Shell。" 'Green'
-} catch { Line "[警告] SHChangeNotify 失败。" 'Yellow' }
+} catch {
+    Line "[警告] SHChangeNotify 失败：$($_.Exception.Message)" 'Yellow'
+}
 
 Line ""
 Line "==================================================" 'Cyan'
