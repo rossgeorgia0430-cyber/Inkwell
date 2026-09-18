@@ -293,11 +293,11 @@ Line "==================================================" 'Cyan'
 Line (" 安装路径 : {0}" -f $Target) 'Green'
 Line (" 主程序   : {0}" -f $exe) 'Green'
 Line "--------------------------------------------------" 'Cyan'
-Line " 已完成完整注册：双击 .md 时“始终使用此应用打开”将会出现。" 'Green'
+Line " 已完成完整注册：双击 .md 时「始终使用此应用打开」将会出现。" 'Green'
 Line " 最后一步（Windows 安全机制要求手动一次，永久生效）：" 'White'
-Line "   双击任意 .md -> 选择 Inkwell -> 勾选/点击“始终”。" 'White'
+Line "   双击任意 .md -> 选择 Inkwell -> 勾选/点击「始终」。" 'White'
 if (-not $Quiet) {
-    Line " 正在打开“默认应用”设置，便于你把 .md 指给 Inkwell…" 'DarkGray'
+    Line " 正在打开「默认应用」设置，便于你把 .md 指给 Inkwell…" 'DarkGray'
     Start-Process 'ms-settings:defaultapps' -ErrorAction SilentlyContinue
 }
 Line "==================================================" 'Cyan'
