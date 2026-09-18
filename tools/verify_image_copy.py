@@ -117,9 +117,9 @@ zoomButtons:v?v.querySelectorAll('.image-zoom-btn').length:0};})()
         win.evaluate_js("window.__ink.image.close()")
         res["async_initial"] = win.evaluate_js(r"""
 (function(){
-  window.__applyInitialPayload({ok:true,title:'async-loaded.md',path:'C:\\Temp\\async-loaded.md',
+  window.__ink.applyInitial({ok:true,title:'async-loaded.md',path:'C:\\Temp\\async-loaded.md',
     content:'<h1 id="async-loaded">异步首篇已加载</h1><p>ready</p>',toc:''});
-  window.__applyInitialPayload({ok:true,title:'stale.md',path:'',
+  window.__ink.applyInitial({ok:true,title:'stale.md',path:'',
     content:'<h1>不应覆盖</h1>',toc:''});
   return {heading:(document.querySelector('#content h1')||{}).textContent,
           title:(document.getElementById('docTitle')||{}).textContent,

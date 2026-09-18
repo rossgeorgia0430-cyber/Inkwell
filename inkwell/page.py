@@ -78,11 +78,10 @@ _SHELL = """
               <button type="button" class="edit-tool-btn ghost" id="editExitBtn" title="退出编辑 (Esc)">完成</button>
             </div>
           </div>
-          <!-- Obsidian 风格：在最终渲染效果中块级编辑；源码 textarea 仅作缓冲/测试钩子 -->
+          <!-- Obsidian 风格：在最终渲染效果中块级编辑；完整源码缓冲在 JS 里是字符串，不落 DOM -->
           <div class="editor-live-wrap" id="editorLiveWrap">
             <div class="editor-live article" id="editorLive" tabindex="0" aria-label="所见即所得编辑区"></div>
           </div>
-          <textarea id="editorSource" class="editor-source-sr" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" wrap="off" aria-hidden="true" tabindex="-1"></textarea>
         </section>
       </div>
     </main>
@@ -135,12 +134,17 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
         "platform": sys.platform,
     })
     nonce = secrets.token_urlsafe(18)
+    # pywebview 在 WKWebView（macOS）上注入 js_api 桥、执行 evaluate_js 时会把脚本
+    # 包一层 eval()，被严格 CSP 挡住；WebView2 的脚本执行路径不走页面 CSP，不需要。
+    script_src = "'self' 'nonce-%s'" % nonce
+    if sys.platform == "darwin":
+        script_src += " 'unsafe-eval'"
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'nonce-{nonce}' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src {script_src}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
 <title>{safe_title}</title>
 <script nonce="{nonce}">window.__errors=[];window.addEventListener('error',function(e){{window.__errors.push((e.message||'')+' @'+(e.filename||'')+':'+(e.lineno||0));}});</script>
 <script nonce="{nonce}">window.__BOOT__ = {boot};</script>
@@ -159,11 +163,15 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
   }})();
 </script>
 <link rel="stylesheet" href="/assets/katex/katex.min.css">
-<link rel="stylesheet" href="/assets/app.css">
+<link rel="stylesheet" href="/assets/css/base.css">
+<link rel="stylesheet" href="/assets/css/chrome.css">
+<link rel="stylesheet" href="/assets/css/article.css">
+<link rel="stylesheet" href="/assets/css/viewer.css">
+<link rel="stylesheet" href="/assets/css/editor.css">
 </head>
 <body>
 {shell}
-<script src="/assets/app.js"></script>
-<script src="/assets/katex/katex.min.js"></script>
+<script defer src="/assets/katex/katex.min.js"></script>
+<script type="module" src="/assets/js/main.js"></script>
 </body>
 </html>"""

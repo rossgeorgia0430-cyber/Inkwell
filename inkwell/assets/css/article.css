@@ -1,0 +1,271 @@
+/* ============================================================
+   Inkwell — 正文排版：标题/段落/列表/表格/行内代码/代码块/公式/Mermaid
+   ============================================================ */
+.main {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+.article-wrap { min-height: 0; }
+.article {
+  width: 100%;
+  /* 自适应页宽：随窗口伸缩——小窗填满，宽屏放宽到 ~84rem（代码块更宽敞），
+     上限保证正文行长仍可读。width:100% 确保任何窗口都不会横向溢出。 */
+  max-width: clamp(46rem, 76vw, 84rem);
+  margin: 0 auto;
+  padding: clamp(20px, 3vw, 48px) clamp(18px, 3vw, 46px) 140px;
+  font-size: var(--reader-font);
+  line-height: 1.7;
+  color: var(--text);
+  word-wrap: break-word;
+}
+
+/* 标题 */
+.article h1, .article h2, .article h3,
+.article h4, .article h5, .article h6 {
+  color: var(--text-strong);
+  font-weight: 680;
+  line-height: 1.3;
+  margin: 1.5em 0 .6em;
+  scroll-margin-top: 16px;
+}
+.article h1 { font-size: 2em; margin-top: .2em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+.article h2 { font-size: 1.55em; padding-bottom: .25em; border-bottom: 1px solid var(--border); }
+.article h3 { font-size: 1.28em; }
+.article h4 { font-size: 1.1em; }
+.article h5 { font-size: 1em; color: var(--text-soft); }
+.article h6 { font-size: .92em; color: var(--muted); }
+
+.article p { margin: .7em 0; }
+.article strong { color: var(--text-strong); font-weight: 680; }
+.article a { color: var(--accent-hover); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 34%, transparent); text-underline-offset: 2px; }
+.article a:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
+.article ul, .article ol { padding-left: 1.5em; margin: .7em 0; }
+.article li { margin: .3em 0; }
+.article li::marker { color: var(--faint); }
+
+.article blockquote {
+  margin: 1em 0;
+  padding: .4em 1.1em;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-soft);
+}
+.article blockquote p { margin: .4em 0; }
+
+.article hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+
+.article img {
+  display: block; max-width: 100%; height: auto; border-radius: var(--radius-sm);
+}
+.article img[data-inkwell-copyable] { cursor: zoom-in; }
+
+/* 表格 */
+.article table {
+  border-collapse: collapse;
+  margin: 1.1em 0;
+  width: auto;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+  font-size: .95em;
+}
+.article th, .article td {
+  border: 1px solid var(--border-strong);
+  padding: 8px 13px;
+  text-align: left;
+}
+.article th { background: var(--surface); font-weight: 650; }
+.article tr:nth-child(even) td { background: var(--surface); }
+
+/* 行内代码 —— Claude Desktop 风格：扁平中性灰底、无描边、文字色不变红 */
+.article code {
+  font-family: var(--font-mono);
+  font-size: .9em;
+  background: var(--inline-code-bg);
+  color: var(--inline-code-fg);
+  padding: .12em .42em;
+  border-radius: 5px;
+  word-break: break-word;
+}
+.article a code { color: inherit; }
+.article h1 code, .article h2 code, .article h3 code,
+.article h4 code, .article h5 code, .article h6 code { font-size: .9em; }
+
+/* ============================================================
+   代码块
+   ============================================================ */
+/* Pygments 输出的容器 div */
+.article .codehilite {
+  position: relative;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  margin: 1.1em 0;
+  overflow: hidden;
+}
+/* 代码块内的 <pre>：容器内或裸露的原始 HTML <pre> 共用同一套排版 */
+.article .codehilite pre,
+.article pre {
+  position: relative;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: .86em;
+  line-height: 1.6;
+}
+.article .codehilite pre {
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+/* 不在 codehilite 容器内的裸 pre（原始 HTML <pre>，未经 Pygments 包装） */
+.article pre:not(.codehilite *) { padding: 0; }
+.article pre code,
+.article .codehilite code {
+  display: block;
+  overflow-x: auto;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  font-size: inherit;
+}
+.article pre > code {
+  font-family: var(--font-mono);
+  line-height: 1.6;
+}
+
+/* 带文件路径的代码块包装头部 */
+.code-block-wrapper {
+  position: relative;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  margin: 1.1em 0;
+  overflow: hidden;
+}
+.code-block-wrapper .codehilite,
+.code-block-wrapper pre {
+  border: none; border-radius: 0; margin: 0; background: transparent;
+}
+.code-block-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 8px 5px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--code-border);
+  font-size: 12px;
+  min-height: 34px;
+}
+.code-lang {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.code-lang-plain { color: var(--faint); }
+.code-filepath {
+  color: var(--faint); font-family: var(--font-mono); font-size: 12px;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 复制按钮（Claude 风格幽灵按钮 + 图标） */
+.code-copy-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; background: transparent;
+  color: var(--muted); font-size: 12px;
+  padding: 4px 9px; border-radius: 6px;
+  cursor: pointer; transition: background var(--speed), color var(--speed);
+  white-space: nowrap;
+}
+.code-copy-btn .copy-ico { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.code-copy-btn:hover { background: var(--surface-2); color: var(--text); }
+.code-copy-btn.copied { color: var(--accent); }
+
+/* Mermaid：默认显示图示，标题栏可在图示与原始源码间切换（灯箱交互见 viewer.css）。 */
+.mermaid-toggle-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; background: transparent;
+  color: var(--muted); font-size: 12px;
+  padding: 4px 9px; border-radius: 6px;
+  cursor: pointer; transition: background var(--speed), color var(--speed);
+  white-space: nowrap;
+}
+.mermaid-toggle-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.mermaid-toggle-btn:hover { background: var(--surface-2); color: var(--text); }
+.mermaid-toggle-btn[aria-pressed="true"] { color: var(--accent); }
+.mermaid-diagram {
+  display: none; overflow: auto; padding: 18px;
+  background: var(--code-bg); min-height: 92px;
+}
+.mermaid-block.is-diagram .codehilite { display: none; }
+.mermaid-block.is-diagram .mermaid-diagram { display: block; }
+.mermaid-diagram > svg { display: block; height: auto; max-width: none; margin: 0 auto; }
+.mermaid-loading, .mermaid-error {
+  padding: 18px; color: var(--muted); font-size: 13px; text-align: center;
+}
+.mermaid-error { color: var(--faint); }
+
+/* 裸代码块（缩进代码，无头部）右上角浮动复制按钮 */
+.code-copy-float {
+  position: absolute; top: 8px; right: 8px;
+  border: 1px solid var(--border); background: var(--elevated);
+  color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 6px;
+  cursor: pointer; opacity: 0; transition: all var(--speed); z-index: 5; white-space: nowrap;
+}
+.code-copy-float:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
+.code-copy-float.copied { color: var(--accent); border-color: var(--accent); }
+.article .codehilite:hover .code-copy-float,
+.article pre:hover .code-copy-float { opacity: 1; }
+
+/* 双击高亮 */
+.var-highlight { background: var(--var-hl); border-radius: 3px; }
+.var-highlight.current { background: var(--var-hl-current); }
+
+/* ============================================================
+   数学公式
+   ============================================================ */
+.math-block {
+  position: relative;
+  margin: 1.2em 0;
+  padding: 6px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.math-block .katex-display { margin: .3em 0; }
+.math-inline { white-space: nowrap; }
+.katex { font-size: 1.08em; }
+
+.math-copy-btn {
+  position: absolute; top: 4px; right: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--elevated);
+  color: var(--text-soft);
+  font-size: 11.5px; padding: 2px 9px;
+  border-radius: 6px; cursor: pointer;
+  opacity: 0; transition: all var(--speed); z-index: 4;
+}
+.math-block:hover .math-copy-btn { opacity: 1; }
+.math-copy-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-strong); }
+.math-copy-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* 欢迎/空态留白 */
+.article > :first-child { margin-top: 0; }
+
+/* 启动首帧：重型 Markdown / base64 图片在后台渲染时保持窗口立即可用。 */
+.initial-loading {
+  min-height: 46vh; display: flex; align-items: center; justify-content: center; gap: 10px;
+  color: var(--muted); font-size: .92em; user-select: none;
+}
+.initial-loading-spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--accent);
+  animation: inkwell-spin .75s linear infinite;
+}
+@keyframes inkwell-spin { to { transform: rotate(360deg); } }

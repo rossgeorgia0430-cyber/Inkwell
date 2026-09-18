@@ -1,0 +1,113 @@
+/* ============================================================
+   Inkwell — 基础层：设计系统变量、全局重置、滚动条、选区
+   ============================================================ */
+
+:root {
+  --tb-h: 44px;
+  --sidebar-w: 270px;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --font-sans: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
+  --speed: .18s;
+  --reader-font: 15px;   /* 正文字号（Ctrl+滚轮缩放、localStorage 持久化）；默认基准（约 +10%） */
+}
+
+/* ---------- 主题：浅色（宣纸暖白 + 松绿点缀的书页质感）---------- */
+:root, [data-theme="light"] {
+  --bg: #f7f5ef;             /* 阅读区：暖调纸面，避免冷白刺眼 */
+  --sidebar-bg: #f1efe8;     /* 目录栏：略沉的米灰，和正文自然分层 */
+  --surface: #f0ede5;        /* 代码头 / 引用底 */
+  --surface-2: #e7e3d8;      /* hover / 激活 */
+  --elevated: #fcfbf7;
+  --text: #33302a;           /* 正文：暖墨色，长时间阅读不疲劳 */
+  --text-strong: #1c1a15;    /* 加粗与标题：清晰，但不生硬 */
+  --text-soft: #4d4941;
+  --muted: #6f6a5e;
+  --faint: #9b9689;
+  --border: #e3dfd3;
+  --border-strong: #d0cbba;
+  --accent: #3f6e5b;         /* 松绿：仅用于交互与定位，不污染正文 */
+  --accent-hover: #315a49;
+  --accent-soft: rgba(63,110,91,.12);
+  --code-bg: #f3f1e9;
+  --code-border: #e1ddce;
+  --inline-code-bg: #ece9df;
+  --inline-code-fg: #42403a;
+  --mark: #f3e3ac;
+  --mark-current: #eac55e;
+  --var-hl: rgba(63,110,91,.13);
+  --var-hl-current: rgba(87,132,113,.38);
+  --shadow: 0 14px 34px rgba(64,56,36,.13);
+  --scroll: #c7c1b1;
+  --scroll-hover: #a29b87;
+  --selection: rgba(63,110,91,.17);
+}
+
+/* ---------- 主题：深色（暖墨黑纸面 + 金墨点缀；去除冷灰蓝光感）---------- */
+[data-theme="dark"] {
+  --bg: #1e1d1a;             /* 阅读区：暖墨黑，不死黑也不泛蓝 */
+  --sidebar-bg: #191814;     /* 侧栏略沉，保留结构 */
+  --surface: #272521;
+  --surface-2: #322f29;
+  --elevated: #2b2924;
+  --text: #d5d1c5;
+  --text-strong: #ede9db;
+  --text-soft: #b3afa2;
+  --muted: #8d897b;
+  --faint: #605d53;
+  --border: #333129;
+  --border-strong: #464337;
+  --accent: #c9a45f;
+  --accent-hover: #dcb978;
+  --accent-soft: rgba(201,164,95,.16);
+  --code-bg: #23221d;
+  --code-border: #3a372d;
+  --inline-code-bg: #2d2b26;
+  --inline-code-fg: #ddd8c8;
+  --mark: #56451d;
+  --mark-current: #93701f;
+  --var-hl: rgba(201,164,95,.22);
+  --var-hl-current: rgba(220,185,120,.42);
+  --shadow: 0 16px 44px rgba(0,0,0,.46);
+  --scroll: #423f36;
+  --scroll-hover: #5b5748;
+  --selection: rgba(201,164,95,.26);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+button { font-family: inherit; }
+
+/* ============================================================
+   滚动条 / 选区
+   ============================================================ */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+::selection { background: var(--selection); }
+
+/* macOS：系统字体（Win32 边缘缩放手柄与最大化态类保留在 chrome.css，这里只放字体变量，
+   因为它和 base.css 的其它主题变量属于同一层）。 */
+html.platform-mac {
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Songti SC", sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, "JetBrains Mono", monospace;
+}

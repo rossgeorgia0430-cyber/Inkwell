@@ -1,0 +1,249 @@
+/* ============================================================
+   Inkwell — 窗口外壳：标题栏 / 侧栏 / 目录 / 搜索栏 / 抽屉 / 缩放手柄 / toast
+   ============================================================ */
+
+/* ============================================================
+   窗口骨架：标题栏 + Grid（侧栏 | 正文）
+   ============================================================ */
+.window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+}
+
+.titlebar {
+  height: var(--tb-h);
+  flex: 0 0 var(--tb-h);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 0 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  position: relative;
+  z-index: 30;
+}
+.tb-cluster { display: flex; align-items: center; gap: 2px; }
+.tb-drag {
+  flex: 1 1 auto;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+.tb-title {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60vw;
+  pointer-events: none;
+}
+.brand {
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  color: var(--text);
+  padding: 0 6px 0 2px;
+}
+
+/* 图标按钮 */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  border: none; background: transparent; color: var(--text-soft);
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: background var(--speed), color var(--speed);
+}
+.icon-btn.sm { width: 28px; height: 28px; }
+.icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.icon-btn:active { transform: translateY(.5px); }
+.icon-btn.active { background: var(--surface-2); color: var(--text); }
+.ico { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.icon-btn.sm .ico { width: 17px; height: 17px; }
+.icon-btn:disabled { opacity: .3; cursor: default; pointer-events: none; }
+
+/* 主题图标显隐 */
+.ico-moon { display: none; }
+[data-theme="dark"] .ico-sun { display: none; }
+[data-theme="dark"] .ico-moon { display: inline; }
+
+/* 窗口控制按钮 */
+.win-controls { display: flex; align-items: center; margin-left: 6px; }
+.win-btn {
+  width: 40px; height: var(--tb-h);
+  border: none; background: transparent; color: var(--muted);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  transition: background var(--speed), color var(--speed);
+}
+.win-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; }
+.win-btn:hover { background: var(--surface-2); color: var(--text); }
+.win-close:hover { background: #e5484d; color: #fff; }
+
+/* Grid 主体 */
+.app {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+/* 收起目录：把侧栏移出网格、正文单列铺满。不能只把列宽设 0——border-box 下
+   width:0 仍压不掉侧栏左右各 10px 的 padding，会漏出约 20px 侧栏底色的发丝边。 */
+.app.sidebar-hidden { grid-template-columns: minmax(0, 1fr); }
+
+/* ============================================================
+   侧栏 / 目录
+   ============================================================ */
+.sidebar {
+  background: var(--sidebar-bg);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  padding: 14px 10px 40px;
+  /* 发丝右边线（inset 阴影，不占几何宽度，收起时不会留缝）+ 少量投影 */
+  box-shadow: inset -1px 0 0 var(--border), 2px 0 11px rgba(50, 45, 35, .055);
+  transition: transform var(--speed) ease;
+}
+.sidebar-head {
+  font-size: 11px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+  padding: 4px 10px 10px;
+}
+/* 收起目录：彻底移出渲染流，不留任何 padding 余宽/发丝缝/投影。
+   仅非抽屉态——抽屉态用 .sidebar-open 控制侧栏，二者由 onResize 保证互斥。 */
+.app.sidebar-hidden:not(.drawer) .sidebar { display: none; }
+
+/* TOC（markdown toc 扩展产出 .toc > ul > li > a） */
+.toc ul { list-style: none; margin: 0; padding: 0; }
+.toc > ul > li { margin: 0; }
+.toc li { position: relative; }
+.toc a {
+  display: block;
+  padding: 5px 10px;
+  margin: 1px 0;
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  border-left: 2px solid transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--speed), color var(--speed);
+}
+.toc a:hover { background: var(--surface-2); color: var(--text); }
+.toc a.active {
+  color: var(--text);
+  background: var(--surface-2);
+  border-left-color: var(--accent);   /* 仅一条细陶土橘竖线作激活标记 */
+  font-weight: 600;
+}
+/* 层级缩进 */
+.toc ul ul a { padding-left: 24px; font-size: 13px; }
+.toc ul ul ul a { padding-left: 38px; font-size: 12.5px; color: var(--faint); }
+.toc ul ul ul ul a { padding-left: 52px; }
+
+/* ============================================================
+   搜索栏
+   ============================================================ */
+.searchbar {
+  position: absolute;
+  top: calc(var(--tb-h) + 12px);
+  right: 18px;
+  z-index: 40;
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 6px 12px;
+  background: var(--elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.searchbar.open { display: flex; }
+.search-ico { width: 17px; height: 17px; color: var(--muted); flex: none; }
+#searchInput {
+  border: none; outline: none; background: transparent;
+  color: var(--text); font-size: 14px; width: 230px; padding: 4px 2px;
+}
+#searchInput::placeholder { color: var(--faint); }
+.search-count { font-size: 12px; color: var(--muted); min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
+
+mark.search-hit { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+mark.search-hit.current { background: var(--mark-current); color: #1c1300; }
+
+/* ============================================================
+   抽屉模式（窄窗口侧栏浮层）
+   ============================================================ */
+.scrim {
+  position: absolute; inset: var(--tb-h) 0 0 0;
+  background: rgba(15,15,14,.44);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--speed); z-index: 18;
+}
+.app.drawer .sidebar {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: var(--sidebar-w); max-width: 84vw;
+  z-index: 20;
+  transform: translateX(-100%);
+  box-shadow: var(--shadow);
+}
+.app.drawer.sidebar-open .sidebar { transform: translateX(0); }
+.app.drawer.sidebar-open ~ .scrim,
+.window .app.drawer.sidebar-open + .scrim { opacity: 1; pointer-events: auto; }
+/* 抽屉模式：侧栏 absolute 脱离网格流，正文用单列铺满整窗（否则 .main 会落进
+   遗留的 0 宽轨道而塌缩成 ~0 —— 即小窗口下正文不自适应的根因）。 */
+.app.drawer { grid-template-columns: minmax(0,1fr); }
+
+/* 侧栏拖拽改变宽度的手柄 */
+.sidebar-resizer {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: calc(var(--sidebar-w) - 3px);
+  width: 6px;
+  cursor: col-resize;
+  z-index: 25;
+}
+.app.sidebar-hidden .sidebar-resizer,
+.app.drawer .sidebar-resizer { display: none; }
+
+/* ============================================================
+   无边框窗口：原生缩放手柄（mousedown → Win32 原生缩放，8 向 + Snap 预览）
+   细边贴窗口最外缘；左右边落在标题栏按钮的内边距死区，顶边仅最外 4px。
+   ============================================================ */
+.resize-handle { position: fixed; z-index: 50; }
+.rh-n  { top: 0; left: 9px; right: 9px; height: 4px; cursor: ns-resize; }
+.rh-s  { bottom: 0; left: 9px; right: 9px; height: 4px; cursor: ns-resize; }
+.rh-w  { left: 0; top: 9px; bottom: 9px; width: 4px; cursor: ew-resize; }
+.rh-e  { right: 0; top: 9px; bottom: 9px; width: 4px; cursor: ew-resize; }
+.rh-nw { top: 0; left: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 51; }
+.rh-ne { top: 0; right: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 51; }
+.rh-sw { bottom: 0; left: 0; width: 9px; height: 9px; cursor: nesw-resize; z-index: 51; }
+.rh-se { bottom: 0; right: 0; width: 9px; height: 9px; cursor: nwse-resize; z-index: 51; }
+/* 最大化后窗口边缘由系统管理，避免透明手柄继续截获最外 4–9px 的点击/光标。 */
+.window-maximized .resize-handle { display: none; }
+
+/* macOS：由 NSWindow 负责边缘缩放，不画 Win32 缩放手柄（系统字体变量见 base.css）。 */
+html.platform-mac .resize-handle { display: none; }
+
+/* 轻量 toast 提示 */
+.toast {
+  position: fixed; left: 50%; bottom: 28px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--text); color: var(--bg);
+  font-size: 13px; line-height: 1.4; padding: 8px 16px;
+  border-radius: 9px; box-shadow: var(--shadow);
+  opacity: 0; pointer-events: none; max-width: 72vw;
+  transition: opacity var(--speed), transform var(--speed); z-index: 80;
+}
+.toast.show { opacity: .96; transform: translateX(-50%) translateY(0); }
