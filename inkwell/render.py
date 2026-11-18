@@ -14,6 +14,13 @@ import base64
 import html as html_module
 
 import markdown
+from markdown.extensions.attr_list import AttrListExtension
+from markdown.extensions.codehilite import CodeHiliteExtension
+from markdown.extensions.fenced_code import FencedCodeExtension
+from markdown.extensions.md_in_html import MarkdownInHtmlExtension
+from markdown.extensions.sane_lists import SaneListExtension
+from markdown.extensions.tables import TableExtension
+from markdown.extensions.toc import TocExtension
 from pygments import highlight as _pyg_highlight
 from pygments.lexers import get_lexer_by_name, guess_lexer, TextLexer
 from pygments.formatters import HtmlFormatter
@@ -116,9 +123,9 @@ def protect_latex(md_text):
 
 def restore_placeholders(text, placeholders):
     """把占位符替换回原始/渲染好的内容；LaTeX 与行内代码保护共用这一步。"""
-    for key, value in placeholders.items():
-        text = text.replace(key, value)
-    return text
+    if not placeholders:
+        return text
+    return re.sub(r"%%[A-Z]+[0-9a-f]{32}%%", lambda m: placeholders.get(m[0], m[0]), text)
 
 
 # ---------------------------------------------------------------------------
@@ -249,9 +256,10 @@ def protect_code_blocks(md_text):
 
 
 def restore_code_blocks(html_text, placeholders):
-    for key, value in placeholders.items():
-        html_text = html_text.replace(f'<div data-codeblk="{key}"></div>', value)
-    return html_text
+    if not placeholders:
+        return html_text
+    return re.sub(r'<div data-codeblk="([0-9a-f]{32})"></div>',
+                  lambda m: placeholders.get(m[1], m[0]), html_text)
 
 
 # ---------------------------------------------------------------------------
@@ -297,12 +305,10 @@ def render_markdown(md_text, base_dir=None):
         placeholders = {k: restore_placeholders(v, escaped_inline) for k, v in placeholders.items()}
 
     md = markdown.Markdown(
-        extensions=['fenced_code', 'codehilite', 'tables', 'toc',
-                    'sane_lists', 'md_in_html', 'attr_list'],
-        extension_configs={
-            'codehilite': {'linenums': False, 'css_class': 'codehilite', 'guess_lang': False},
-            'toc': {'permalink': False, 'toc_depth': 4},
-        },
+        extensions=[FencedCodeExtension(), CodeHiliteExtension(linenums=False, css_class="codehilite",
+                                                              guess_lang=False),
+                    TableExtension(), TocExtension(permalink=False, toc_depth=4), SaneListExtension(),
+                    MarkdownInHtmlExtension(), AttrListExtension()],
     )
     # 先本地化原始 HTML 中的 img/source，再做安全清理；这样 file:/Windows 路径
     # 不需要作为可执行 URL scheme 放进 sanitizer 的 allowlist。

@@ -1,4 +1,4 @@
-// Live Preview 的块级 DOM：未激活块显示最终渲染，点击块后就地编辑源码。
+// 正文直接编辑与段落源码编辑共用同一份 Markdown 缓冲。
 // Markdown 全文（state.editorText）为真相，state.lpBlocks 是它的分块缓存。
 import { state } from "../state.js";
 import { $, api, formatModShortcut } from "../util.js";
@@ -10,6 +10,7 @@ import {
 // editor.js 反过来也从本模块导入（进入/退出/保存都要驱动块级 DOM）——这是一个
 // 有意为之的模块间循环引用：两边都只在事件回调里调用对方，不在模块顶层求值时
 // 调用，ES 模块的循环导入在这种用法下是安全的。
+import { prepareVisualBlock } from "./visual.js";
 import { saveEdit } from "./editor.js";
 
 export function setEditStatus(msg, kind) {
@@ -35,14 +36,23 @@ function applyBlockKindClass(blockEl, kind) {
   }
 }
 
+let bufferTimer;
+
+function bufferText() {
+  if (state.editorText === null) state.editorText = joinMarkdownBlocks(state.lpBlocks);
+  return state.editorText;
+}
+
 export function syncBufferFromBlocks() {
-  state.editorText = joinMarkdownBlocks(state.lpBlocks);
-  markDirtyFromBuffer();
+  state.editorText = null;
+  setDirty(true);
+  clearTimeout(bufferTimer);
+  bufferTimer = setTimeout(() => { if (state.editMode) markDirtyFromBuffer(); }, 350);
 }
 
 export function markDirtyFromBuffer() {
   if (!state.editMode) return;
-  setDirty(state.editorText !== state.editBaseline);
+  setDirty(bufferText() !== state.editBaseline);
 }
 
 export function updateDirtyUI() {
@@ -63,6 +73,7 @@ export function updateDirtyUI() {
 }
 
 export function setDirty(next) {
+  if (state.editDirty === !!next) return;
   state.editDirty = !!next;
   updateDirtyUI();
 }
@@ -77,13 +88,9 @@ export function getActiveTextarea() {
 
 export function flushActiveBlock() {
   var ta = getActiveTextarea();
-  // 兜底：索引失效时仍从 DOM 读孤立 textarea
-  if (!ta && state.editorLive) {
-    ta = state.editorLive.querySelector("textarea.lp-source");
-  }
   if (!ta) return;
-  var idx = state.activeBlockIdx >= 0 ? state.activeBlockIdx : resolveBlockIdxFromEl(ta);
-  if (idx < 0 || !state.lpBlocks[idx]) return;
+  var idx = state.activeBlockIdx;
+  if (idx < 0 || !state.lpBlocks[idx] || state.lpBlocks[idx].text === ta.value) return;
   state.lpBlocks[idx].text = ta.value;
   syncBufferFromBlocks();
 }
@@ -95,7 +102,7 @@ export function invalidateLiveRender() {
 
 export function getEditText() {
   flushActiveBlock();
-  return state.editorText || "";
+  return bufferText() || "";
 }
 
 export function setEditText(t, opts) {
@@ -251,6 +258,12 @@ function buildBlockViewEl(idx, opts) {
   } else {
     view.innerHTML = part;
   }
+  prepareVisualBlock(view, state.lpBlocks[idx].text, text => {
+    if (!view.isConnected) return;
+    state.lpBlocks[idx].text = text;
+    invalidateLiveRender();
+    syncBufferFromBlocks();
+  });
   return view;
 }
 
@@ -380,7 +393,7 @@ function bindActiveTextarea(ta) {
   ta.addEventListener("keydown", onActiveTextareaKeydown);
   ta.addEventListener("blur", function () {
     setTimeout(function () {
-      if (!state.editMode || state.lpActivating) return;
+      if (!ta.isConnected || !state.editMode || state.lpActivating) return;
       if (ta._lpComposing || ta.isComposing) return;
       var ae = document.activeElement;
       if (ae && ae.classList && ae.classList.contains("lp-source")) return;
@@ -455,6 +468,7 @@ function captureMountRestoreState(opts) {
 }
 
 function buildLiveBlocks(restore) {
+  const fragment = document.createDocumentFragment();
   for (var i = 0; i < state.lpBlocks.length; i++) {
     var blockEl = document.createElement("div");
     blockEl.className = "lp-block";
@@ -469,11 +483,10 @@ function buildLiveBlocks(restore) {
     } else {
       blockEl.appendChild(buildBlockViewEl(i, {}));
     }
-    state.editorLive.appendChild(blockEl);
+    fragment.appendChild(blockEl);
   }
-  state.editorLive.querySelectorAll(".lp-view").forEach(function (v) {
-    initRenderedFragment(v);
-  });
+  state.editorLive.appendChild(fragment);
+  initRenderedFragment(state.editorLive);
 }
 
 function restoreMountFocus(restore) {
@@ -561,7 +574,7 @@ export function activateBlock(idx, opts) {
 
   // 切换块：尽量就地改 DOM，不全页重挂（减少跳动）
   if (prev >= 0 && prev !== idx) {
-    var full = state.editorText;
+    var full = bufferText();
     var oldCount = state.lpBlocks.length;
     state.lpBlocks = splitMarkdownBlocks(full);
     // 结构未变：只刷新上一块 HTML，再就地激活目标块
@@ -603,10 +616,10 @@ function refreshSingleBlockView(idx) {
   var a = api();
   if (!a || !a.preview_markdown) return;
   var text = (state.lpBlocks[idx] && state.lpBlocks[idx].text) || "";
-  var token = ++state.lpSingleRefreshSeq;
+  const element = getBlockEl(idx);
   var expected = text;
   a.preview_markdown(text || "\n", state.editPath || state.currentPath).then(function (p) {
-    if (!state.editMode || token !== state.lpSingleRefreshSeq) return;
+    if (!state.editMode || element !== getBlockEl(idx)) return;
     if (!p || p.ok === false) {
       var el0 = getBlockEl(idx);
       if (el0 && state.activeBlockIdx !== idx) {
@@ -625,7 +638,7 @@ function refreshSingleBlockView(idx) {
       fillBlockView(el, idx, { holdHeight: hold });
     }
   }).catch(function () {
-    if (!state.editMode || token !== state.lpSingleRefreshSeq) return;
+    if (!state.editMode || element !== getBlockEl(idx)) return;
     var el1 = getBlockEl(idx);
     if (el1 && state.activeBlockIdx !== idx) fillBlockView(el1, idx, { preferText: true });
   });
@@ -641,7 +654,7 @@ export function deactivateBlock() {
   invalidateLiveRender();
   var idx = state.activeBlockIdx;
   flushActiveBlock();
-  var full = state.editorText;
+  var full = bufferText();
   var oldCount = state.lpBlocks.length;
   state.lpBlocks = splitMarkdownBlocks(full);
   var el = getBlockEl(idx);
@@ -659,7 +672,7 @@ export function deactivateBlock() {
     // 单块刷新拿不到整篇 TOC，这里单独请求一次完整预览只为更新目录。
     var a = api();
     if (a && a.preview_markdown) {
-      a.preview_markdown(state.editorText, state.editPath || state.currentPath).then(function (p2) {
+      a.preview_markdown(bufferText(), state.editPath || state.currentPath).then(function (p2) {
         if (!state.editMode) return;
         if (state.toc && p2 && p2.toc != null) state.toc.innerHTML = p2.toc || "";
       }).catch(function () {});
@@ -757,7 +770,7 @@ export function runLiveRender(opts) {
     preAnchor = { idx: -1, offset: 0, scrollTop: state.pendingEnterScroll };
   }
 
-  state.lpBlocks = splitMarkdownBlocks(state.editorText);
+  state.lpBlocks = splitMarkdownBlocks(bufferText());
   if (wantActive >= state.lpBlocks.length) wantActive = -1;
   state.activeBlockIdx = -1;
 

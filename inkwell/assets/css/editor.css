@@ -305,3 +305,39 @@ body.edit-mode .tb-title.dirty::before {
     left: -6px;
   }
 }
+
+.lp-view [contenteditable] { outline: none; min-height: 1em; white-space: pre-wrap; }
+.lp-view [contenteditable]:empty::before { content: "\\200b"; }
+.lp-edit-source {
+  position: absolute;
+  right: 0;
+  top: 0;
+  transform: translateY(-65%);
+  opacity: 0;
+  pointer-events: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.lp-edit-source.source-only, .lp-block:hover .lp-edit-source, .lp-block:focus-within .lp-edit-source {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.lp-preview-controls {
+  margin-block: .4em;
+}
+.lp-preview-controls > summary { cursor: pointer; color: var(--text-soft); }
+.lp-parameter {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: .6em;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font: .9em/1.5 var(--font-mono);
+}
+.lp-view pre[contenteditable] { white-space: pre; }

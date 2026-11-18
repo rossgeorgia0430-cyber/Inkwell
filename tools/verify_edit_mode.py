@@ -81,6 +81,9 @@ def main():
         conflict = api.save_document("# mine\n", str(doc), m1)
         assert conflict.get("conflict"), conflict
         assert isinstance(conflict.get("mtime_ns"), str)
+        for invalid in (True, False, "", "  ", 1.5):
+            assert not api.save_document("# mine", str(doc), invalid)["ok"]
+            assert doc.read_text(encoding="utf-8") == "# external\n"
         # force save
         forced = api.save_document("# mine\n", str(doc), None)
         assert forced["ok"], forced

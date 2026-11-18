@@ -6,9 +6,9 @@ import { clearVarHighlights, initContent, closeSearch, onContentActionClick } fr
 import { onContentDiagramClick } from "../mermaid.js";
 import { renderInto, onContentLinkClick } from "../nav.js";
 import { setDocTitle } from "../chrome.js";
-import { findImageAt, splitMarkdownBlocks, joinMarkdownBlocks } from "./blocks.js";
+import { findImageAt, splitMarkdownBlocks } from "./blocks.js";
 import {
-  getActiveTextarea, flushActiveBlock, teardownActiveTextarea, deactivateBlock,
+  getEditText, getActiveTextarea, flushActiveBlock, deactivateBlock,
   activateBlock, runLiveRender, refreshLiveRender,
   setEditStatus, setDirty, updateDirtyUI, markDirtyFromBuffer,
   syncBufferFromBlocks, autosizeTextarea, focusNoScroll,
@@ -60,10 +60,9 @@ export function enterEditMode() {
     state.editMode = true;
     state.editPath = res.path || state.currentPath;
     state.editMtimeNs = res.mtime_ns != null ? String(res.mtime_ns) : null;
-    // 规范化 baseline，避免仅因 CRLF/空行归一化就误标 dirty
     var raw = res.text || "";
     state.lpBlocks = splitMarkdownBlocks(raw);
-    state.editBaseline = joinMarkdownBlocks(state.lpBlocks);
+    state.editBaseline = raw;
     state.editorText = state.editBaseline;
     state.activeBlockIdx = -1;
     state.lastHtmlParts = [];
@@ -153,7 +152,7 @@ export function saveEdit(opts) {
   var saveGen = ++state.editSaveGen;
   setEditStatus("保存中…");
   // 磁盘快照：finishSave 的 baseline 必须与此一致
-  var text = state.editorText;
+  var text = getEditText();
   var path = state.editPath || state.currentPath;
   function unlock() { state.editSaving = false; }
   return a.save_document(text, path, state.editMtimeNs).then(function (p) {
@@ -211,13 +210,8 @@ function finishSave(p, opts, saveGen, savedText) {
     if (state.toc && p.toc != null) state.toc.innerHTML = p.toc || "";
     initContent();
   }
-  // 拆掉激活态；若用户在保存期间又改了，flush 后与 baseline 比较
   flushActiveBlock();
-  teardownActiveTextarea();
-  state.activeBlockIdx = -1;
   markDirtyFromBuffer();
-  runLiveRender({});
-  if (p.path && api() && api().activate_path) api().activate_path(p.path);
   if (p.encoding_changed) {
     setEditStatus("已保存（编码已改为 " + p.encoding_changed + "）", "ok");
   } else {
@@ -238,14 +232,22 @@ export function insertAtCursor(snippet, opts) {
 
   var ta = getActiveTextarea();
   if (!ta) {
-    // 无激活块：作为新块追加；渲染完成后激活
-    if (state.lpBlocks.length === 1 && !(state.lpBlocks[0].text || "").replace(/^\s+|\s+$/g, "")) {
+    // 工具栏插入独立段落时，优先放在当前选区之后。
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode;
+    const element = anchor?.nodeType === Node.ELEMENT_NODE ? anchor : anchor?.parentElement;
+    const selected = element?.closest("#editorLive .lp-block");
+    let newIdx = selected ? Number(selected.dataset.idx) + 1 : state.lpBlocks.length;
+    if (state.lpBlocks.length === 1 && !state.lpBlocks[0].text.trim()) {
       state.lpBlocks[0].text = snippet;
+      newIdx = 0;
     } else {
-      state.lpBlocks.push({ text: snippet });
+      const previous = state.lpBlocks[newIdx - 1];
+      const inserted = { text: snippet, after: previous.after || "" };
+      previous.after = "";
+      state.lpBlocks.splice(newIdx, 0, inserted);
     }
     syncBufferFromBlocks();
-    var newIdx = state.lpBlocks.length - 1;
     runLiveRender({ afterActivate: newIdx });
     // 选中占位文本：等 textarea 挂上后（渲染回调里 mount）
     var tries = 0;
@@ -380,29 +382,12 @@ function insertImage(mode) {
 
 function onLiveClick(e) {
   if (!state.editMode || !state.editorLive) return;
-  // 交互控件 + 图片/图示本体：交给后续灯箱/复制处理器，不进入块编辑
-  if (e.target.closest && e.target.closest(
-    "button, a, textarea, input, img, .image-block, .mermaid-diagram, .mermaid-block, " +
-    ".code-copy-float, .math-copy-btn, [data-mermaid-action], [data-copy-action]"
-  )) {
-    return;
+  const button = e.target.closest(".lp-edit-source");
+  if (button) activateBlock(Number(button.closest(".lp-block").dataset.idx));
+  if (e.target.closest("[contenteditable] a")) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
   }
-  var block = e.target.closest && e.target.closest(".lp-block");
-  if (!block || !state.editorLive.contains(block)) {
-    if (state.activeBlockIdx >= 0 && (e.target === state.editorLive || e.target === state.editorLiveWrap)) {
-      deactivateBlock();
-    }
-    return;
-  }
-  var idx = parseInt(block.dataset.idx, 10);
-  if (isNaN(idx)) return;
-  if (idx === state.activeBlockIdx) {
-    // 激活索引存在但 textarea 丢失时允许修复
-    if (!getActiveTextarea()) activateBlock(idx);
-    return;
-  }
-  e.preventDefault();
-  activateBlock(idx);
 }
 
 export function bindEditorUI() {
@@ -432,6 +417,9 @@ export function bindEditorUI() {
         setTimeout(function () { state.lpActivating = false; }, 50);
       }
     }, true);
+    state.editorLive.addEventListener("focusin", event => {
+      if (event.target.isContentEditable && getActiveTextarea()) deactivateBlock();
+    });
     state.editorLive.addEventListener("click", onLiveClick);
     state.editorLive.addEventListener("click", onContentActionClick);
     state.editorLive.addEventListener("click", onContentImageClick);

@@ -137,12 +137,14 @@ function _matchMathEnd(text, pos) {
   var n = text.length;
   var j = pos;
   while (j < n && (text.charAt(j) === " " || text.charAt(j) === "\t")) j++;
-  if (text.slice(j, j + 2) !== "$$") return null;
+  const opener = text.slice(j, j + 2);
+  if (opener !== "$$" && opener !== "\\[") return null;
+  const closer = opener === "$$" ? "$$" : "\\]";
   j += 2;
   var lineEnd = j;
   while (lineEnd < n && text.charAt(lineEnd) !== "\n") lineEnd++;
   var after = text.slice(j, lineEnd).replace(/\s+$/, "");
-  if (after.length >= 2 && after.slice(-2) === "$$") {
+  if (after.length >= 2 && after.slice(-2) === closer) {
     var end = lineEnd;
     if (end < n && text.charAt(end) === "\n") end++;
     return end;
@@ -153,7 +155,7 @@ function _matchMathEnd(text, pos) {
     var ls = j;
     while (j < n && text.charAt(j) !== "\n") j++;
     var line = text.slice(ls, j).replace(/^\s+|\s+$/g, "");
-    if (line === "$$") {
+    if (line === closer) {
       if (j < n && text.charAt(j) === "\n") j++;
       return j;
     }
@@ -190,10 +192,43 @@ export function classifyBlockKind(raw) {
   return "text";
 }
 
+function htmlBlockEnd(text, start) {
+  if (text.startsWith("<!--", start)) {
+    const end = text.indexOf("-->", start + 4);
+    return end === -1 ? text.length : end + 3;
+  }
+  const opening = / {0,3}<(div|section|details|table|blockquote|pre|ul|ol|article|figure|aside)(?=[\s>])/iy;
+  opening.lastIndex = start;
+  const tag = opening.exec(text)?.[1];
+  if (!tag) return null;
+  const tags = new RegExp("<(/?)" + tag + "(?=[\\s>])(?:[^>\"']|\"[^\"]*\"|'[^']*')*>", "ig");
+  tags.lastIndex = start;
+  let depth = 0, match;
+  while ((match = tags.exec(text))) {
+    depth += match[1] ? -1 : 1;
+    if (!depth) return tags.lastIndex;
+  }
+  return text.length;
+}
+
 export function splitMarkdownBlocks(text) {
-  text = text == null ? "" : String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const source = String(text ?? "");
+  text = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   var n = text.length;
   var blocks = [];
+  const endings = source.includes("\r") ? source.match(/\r\n|\r|\n/g) || [] : null;
+  let newlineIndex = 0;
+  let previousEnd = 0;
+  function original(slice) {
+    return endings ? slice.replace(/\n/g, () => endings[newlineIndex++]) : slice;
+  }
+  function addBlock(start, end) {
+    const body = text.slice(start, end).replace(/\n+$/, "");
+    const before = original(text.slice(previousEnd, start));
+    const raw = original(body);
+    blocks.push({ text: body, initialText: body, raw, before });
+    previousEnd = start + body.length;
+  }
   var i = 0;
   while (i < n) {
     while (i < n && text.charAt(i) === "\n") i++;
@@ -201,40 +236,65 @@ export function splitMarkdownBlocks(text) {
     var start = i;
     var fenceEnd = _matchFenceEnd(text, i);
     if (fenceEnd != null) {
-      blocks.push({ text: text.slice(start, fenceEnd).replace(/\n+$/, "") });
+      addBlock(start, fenceEnd);
       i = fenceEnd;
       continue;
     }
     var mathEnd = _matchMathEnd(text, i);
     if (mathEnd != null) {
-      blocks.push({ text: text.slice(start, mathEnd).replace(/\n+$/, "") });
+      addBlock(start, mathEnd);
       i = mathEnd;
       continue;
     }
-    var j = i;
-    while (j < n) {
-      if (text.charAt(j) === "\n") {
-        var k = j + 1;
-        if (k >= n || text.charAt(k) === "\n") break;
-        if (_matchFenceEnd(text, k) != null || _matchMathEnd(text, k) != null) break;
-      }
-      j++;
+    const htmlEnd = htmlBlockEnd(text, start);
+    if (htmlEnd !== null && (htmlEnd === n || text[htmlEnd] === "\n")) {
+      addBlock(start, htmlEnd);
+      i = htmlEnd;
+      continue;
     }
-    var raw = text.slice(start, j).replace(/\n+$/, "");
-    blocks.push({ text: raw });
+    const container = /(?: {0,3}(?:[-*+]|\d+\.)[ \t]| {4}|\t)/y;
+    container.lastIndex = start;
+    const canContinue = container.test(text);
+    let j = text.indexOf("\n", start);
+    while (j !== -1) {
+      const k = j + 1;
+      if (k >= n) break;
+      if (text[k] === "\n") {
+        let next = k;
+        while (text[next] === "\n") next++;
+        if (!canContinue || !(text.startsWith("    ", next) || text[next] === "\t")) break;
+        j = text.indexOf("\n", next);
+        continue;
+      }
+      if (_matchFenceEnd(text, k) != null || _matchMathEnd(text, k) != null) break;
+      j = text.indexOf("\n", k);
+    }
+    if (j === -1) j = n;
+    addBlock(start, j);
     i = j;
     while (i < n && text.charAt(i) === "\n") i++;
   }
-  if (!blocks.length) blocks.push({ text: "" });
+  if (!blocks.length) addBlock(0, 0);
+  blocks[0].newline = endings?.[0] || "\n";
+  blocks[blocks.length - 1].after = original(text.slice(previousEnd));
   return blocks;
 }
 
 export function joinMarkdownBlocks(blocks) {
   if (!blocks || !blocks.length) return "";
-  return blocks.map(function (b) { return b.text || ""; }).join("\n\n");
+  const newline = blocks[0].newline || "\n";
+  return blocks.map((block, index) => {
+    const before = block.before ?? (index ? newline + newline : "");
+    const raw = block.raw ?? "";
+    const body = block.text === block.initialText
+      ? raw : block.text.replace(/\n/g, (raw.match(/\r\n|\r|\n/) || [newline])[0]);
+    return before + body + (block.after || "");
+  }).join("");
 }
 
-const LP_MARKER_PREFIX = "<!--inkwell-lp-block:";
+// 区分文档自带的注释与当前编辑会话的分隔标记。
+const markerId = crypto.getRandomValues(new Uint32Array(1))[0].toString() + "0";
+const LP_MARKER_PREFIX = "<!--inkwell-lp-block:" + markerId;
 const LP_MARKER_SUFFIX = "-->";
 
 export function bufferWithMarkers(blocks) {
@@ -248,7 +308,7 @@ export function bufferWithMarkers(blocks) {
 
 export function splitPreviewHtml(html, count) {
   html = html || "";
-  var re = /<!--inkwell-lp-block:(\d+)-->/g;
+  var re = new RegExp(LP_MARKER_PREFIX + "\\d+-->", "g");
   var parts = [];
   var last = 0;
   var m;

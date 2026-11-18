@@ -140,6 +140,27 @@ class Api:
         self._initial_delivered = False
         self._open_seq = 0
         self._closing = False
+        self._update_package = None
+
+    @_bridge_call
+    def check_update(self):
+        from . import updates
+        self._update_package = None
+        result, self._update_package = updates.check_release()
+        return result
+
+    @_bridge_call
+    def download_update(self):
+        from . import updates
+        package = self._update_package
+        if not package or self._closing:
+            return {"ok": False, "error": "请先检查是否有可下载的更新"}
+        result = self._window.create_file_dialog(webview.FileDialog.SAVE, save_filename=package.name)
+        if not result:
+            return {"ok": False, "cancelled": True}
+        path = result[0] if isinstance(result, (list, tuple)) else result
+        updates.download_package(package, Path(path))
+        return {"ok": True}
 
     def _remember_encoding(self, path, encoding):
         with self._state_lock:

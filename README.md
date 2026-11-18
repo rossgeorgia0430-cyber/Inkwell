@@ -15,7 +15,8 @@
 - **代码双击高亮**：在代码块内双击任意标识符，高亮该 token 的所有出现（VSCode 风格），`Esc` 或点击别处清除。
 - **自适应布局**：任意宽高比窗口都可用；窗口变窄时目录自动收起为抽屉。
 - **实时刷新**：源文件被外部修改时自动重载（保留滚动位置）；编辑模式中会暂停监视，避免覆盖未保存内容。
-- **编辑模式（Obsidian 风格 Live Preview）**：标题栏铅笔按钮（或 `Ctrl+E`）进入。文档以**最终渲染效果**呈现；点击段落/标题/表格/代码/公式块后在**原渲染位置无框就地**编辑 Markdown（无白底编辑框、无左右分栏），离开后恢复最终效果。切换块时尽量只更新相关块，减少整页跳动。可插图/内嵌图、删图、插入代码/Mermaid/公式；`Ctrl+S` 保存。真相源始终是完整 Markdown。
+- **原地编辑**：用标题栏铅笔或 `Ctrl+E` 进入编辑模式。可以直接编辑标题、段落、列表、表格、代码正文和可映射的 HTML 文字。点击行内公式可改 LaTeX。展开块级公式、流程图或独立图片下方的控件，可以边看预览边改公式、图示定义或图片说明。复杂组合语法可展开「编辑并预览」，「源码」可修改段落中的全部标记。用 `Ctrl+S` 将修改保存回原文件。
+- **检查更新**：点击标题栏的下载图标，匿名查询 GitHub 正式发行版。发现适配当前平台的新版安装包时，可选择保存位置。下载完成后会核对文件长度和 SHA-256。检查和下载均由宿主发起，只发送通用客户端标识。仓库标识在客户端做了可逆混淆，服务端仍能看到连接的出口 IP。
 
 ## 快捷键
 
@@ -86,7 +87,9 @@ open Inkwell.app
 
 `tools/` 下的 `verify_*.py` 是回归检查，逐个用 `python tools\verify_xxx.py` 运行即可，无测试框架：
 
-- **非 GUI**（纯逻辑，跑完直接打印结果）：`verify_host.py`、`verify_edit_mode.py`、`verify_embedded_images.py`、`verify_render_security.py`、`verify_lp_markers.py`、`verify_platform_gates.py`。
+Windows 上运行 `python tools/run_windows_tests.py` 可执行整套检查。任一脚本或 WebView2 结果失败，命令会以非零状态退出。
+
+- **非 GUI**（纯逻辑，跑完直接打印结果）：`verify_updates.py`、`verify_host.py`、`verify_edit_mode.py`、`verify_embedded_images.py`、`verify_render_security.py`、`verify_lp_markers.py`、`verify_platform_gates.py`。
 - **需要 WebView2**：其余 `verify_*.py`（如 `verify_viewer` / `verify_mermaid` / `verify_edit_live` / `verify_copy`）。运行时会弹出一个 WebView2 窗口，自动跑完并关闭，结果写入 `tools/_*_result.json`（看其中的 `ok` / `all_pass` 字段）。
 - `verify_mac_ui_thread.py` 是 macOS 专用检查（不弹窗，但要求 `sys.platform == "darwin"`），在 Windows 上运行会直接断言失败。
 

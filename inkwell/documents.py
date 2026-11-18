@@ -76,13 +76,10 @@ def encode_document_text(text, encoding):
 
 def coerce_mtime_ns(value):
     """把桥接层传来的 mtime 规范为 int；JSON Number 会丢 ns 精度，故优先收字符串。"""
-    if value is None or isinstance(value, bool):
+    if value is None:
         return None
-    if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            return None
-        return int(value)
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError("无效的 mtime")
     return int(value)
 
 

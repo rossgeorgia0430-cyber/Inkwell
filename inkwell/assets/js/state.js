@@ -37,5 +37,5 @@ export const state = {
   editorText: "",
   editorLive: null, editorLiveWrap: null, editorPane: null, editorStatus: null,
   lpBlocks: [], activeBlockIdx: -1, lastHtmlParts: [], lpActivating: false,
-  pendingEnterScroll: null, lpSingleRefreshSeq: 0, editRestoreScroll: null,
+  pendingEnterScroll: null, editRestoreScroll: null,
 };

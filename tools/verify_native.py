@@ -63,7 +63,7 @@ res = {}
 
 def job(win):
     try:
-        time.sleep(1.0)
+        assert _wait_js(win, "!!(window.__ink && window.pywebview?.api?.win_is_maximized)", timeout=20)
         hwnd = win.native.Handle.ToInt32()
         api._init_native_chrome()
         time.sleep(0.3)

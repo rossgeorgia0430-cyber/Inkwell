@@ -56,6 +56,7 @@ function handleEditModeShortcut(e, ctrl) {
 }
 
 function onGlobalKeydown(e) {
+  if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
   var ctrl = e.ctrlKey || e.metaKey;
   // 编辑器内的 Ctrl+S / Tab 由 textarea 自己处理；此处拦截全局
   if (ctrl && (e.key === "e" || e.key === "E")) {
@@ -121,15 +122,15 @@ function boot() {
   onResize();
   initContent();
 
-  // KaTeX 以 <script defer> 放在本模块之前加载，defer 脚本与 module 脚本按文档
-  // 顺序在解析完成后依次执行，进入这里时 window.katex 必然已经就绪，不需要轮询。
-
   // pull_initial 已就绪就直接调用；否则等 pywebviewready 事件，只调用一次。
   var bootApi = api();
   if (bootApi && bootApi.pull_initial) {
     pullInitial();
   } else {
-    window.addEventListener("pywebviewready", pullInitial);
+    window.addEventListener("pywebviewready", () => {
+      onResize();
+      pullInitial();
+    }, { once: true });
   }
 }
 

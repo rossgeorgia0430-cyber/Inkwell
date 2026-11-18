@@ -4,7 +4,7 @@ import os
 import sys
 import traceback
 
-__version__ = "1.4.3"
+__version__ = "1.5.1"
 APP_NAME = "Inkwell"
 
 DEBUG = os.environ.get("INKWELL_DEBUG") == "1"

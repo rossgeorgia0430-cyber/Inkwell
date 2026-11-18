@@ -30,9 +30,18 @@ PIXEL_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 
-DOC = """# Edit Live Test
+DOC = """
+# Edit Live Test
 
-一段正文用于测试 Live Preview。
+
+一段正文用于测试 **Live Preview**。
+
+- 清单项目
+- _强调_
+
+| 列名 | 数值 |
+| --- | ---: |
+| 内容 | -12 |
 
 ![pixel](images/pixel.png)
 
@@ -43,6 +52,25 @@ print(1)
 $$
 E = mc^2
 $$
+
+~~~mermaid
+flowchart LR
+A --> B
+~~~
+
+<div><b>HTML text</b></div>
+
+Setext title
+------------
+
+1. Parent
+    - Child
+
+Mixed __style__, $a+b$ and ![inline](images/pixel.png) end.
+
+[visible][ref]
+
+[ref]: https://example.org "Title"
 """
 
 
@@ -83,6 +111,9 @@ def wait_file_contains(path, needle, timeout=10):
 BLOCK_SPLIT_SAMPLES = [
     ("", [""]),
     ("hello", ["hello"]),
+    ("<div>\n\n<div>nested</div>\n\n</div>\n\np", ["<div>\n\n<div>nested</div>\n\n</div>", "p"]),
+    ("- first\n\n    more", ["- first\n\n    more"]),
+    ("\\[\na\n\nb\n\\]", ["\\[\na\n\nb\n\\]"]),
     ("# Title\n\npara one\n\npara two", ["# Title", "para one", "para two"]),
     (
         "before\n\n```python\nprint(1)\n\nprint(2)\n```\n\nafter",
@@ -173,10 +204,66 @@ def check_block_logic(window, res):
     return all(c["ok"] for c in checks)
 
 
+def check_structured_edits(window, doc_path):
+    from pathlib import Path
+    path = Path(doc_path)
+    expected = path.read_bytes()
+    for selector, old, new in (
+        (".codehilite pre[contenteditable]", "print(1)", "print(2)"),
+        ("b [contenteditable]", "HTML text", "HTML 修改"),
+        ("h2[contenteditable]", "Setext title", "新标题"),
+        (".lp-list-label[contenteditable]", "Parent", "父项"),
+        ("a", "visible", "引用"),
+    ):
+        script = """
+        (() => {
+          const el = [...document.querySelectorAll('#editorLive ' + %s)]
+            .find(node => node.textContent === %s && node.isContentEditable);
+          if (!el) return false;
+          el.textContent = %s;
+          el.dispatchEvent(new Event('input', {bubbles:true}));
+          return true;
+        })()
+        """ % (json.dumps(selector), json.dumps(old), json.dumps(new))
+        assert js(window, script), selector
+        expected = expected.replace(old.encode(), new.encode(), 1)
+    assert js(window, r"""
+(() => {
+  const atom = document.querySelector('#editorLive .math-inline');
+  atom.click();
+  const input = document.querySelector('.lp-inline-formula input');
+  if (!input) return false;
+  input.value = 'c+d';
+  input.dispatchEvent(new Event('input', {bubbles:true}));
+  return true;
+})()
+""")
+    expected = expected.replace(b"$a+b$", b"$c+d$")
+    for label, old, new in (
+        ("编辑公式", "E = mc^2", "E = mc^3"),
+        ("编辑流程图", "A --> B", "A --> C"),
+        ("编辑图片说明", "pixel", "像素"),
+    ):
+        js(window, "Array.from(document.querySelectorAll('#editorLive summary')).find(s => s.textContent === %s).click()" % json.dumps(label))
+        field = '#editorLive textarea[aria-label="%s"]' % label
+        assert wait_js(window, "!!document.querySelector(%s)" % json.dumps(field))
+        js(window, """(() => {const el = document.querySelector(%s);
+          el.value = el.value.replace(%s, %s);
+          el.dispatchEvent(new Event('input', {bubbles:true}));})()""" % (
+              json.dumps(field), json.dumps(old), json.dumps(new)))
+        expected = expected.replace(old.encode(), new.encode(), 1)
+    assert wait_js(window, "!!document.querySelector('#editorLive .math-block[data-latex=\\\"E = mc^3\\\"]') && !!document.querySelector('#editorLive img[alt=像素]')")
+    js(window, "window.__ink.edit.save()")
+    assert wait_js(window, "!window.__ink.edit.state().dirty")
+    actual = path.read_bytes()
+    assert actual == expected, (actual, expected)
+
+
 def job(window, tmp_dir, doc_path):
     res = {"stage": "start"}
     try:
-        assert wait_js(window, "!!(window.__ink && window.__ink.edit)")
+        assert window.events.loaded.wait(90), "WebView2 未完成页面加载"
+        assert wait_js(window, "!!(window.__ink && window.__ink.edit)", timeout=40), js(window, "JSON.stringify(window.__errors)")
         res["block_logic_ok"] = check_block_logic(window, res)
 
         # ---- 进入编辑 ----
@@ -187,10 +274,57 @@ def job(window, tmp_dir, doc_path):
         res["enter_state"] = st
         assert st["blocks"] >= 5, st
 
+        assert wait_js(window, "!!document.querySelector('#editorLive strong') && !document.querySelector('.lp-scroll-pending')")
+        with open(doc_path, "rb") as source_file:
+            original = source_file.read()
+        assert js(window, "window.__ink.edit.getText()").encode() == original
+        res["stage"] = "visual-edit"
+        assert js(window, r"""
+(() => {
+  const strong = document.querySelector('#editorLive strong');
+  const host = strong.closest('[contenteditable=true]');
+  host.focus();
+  strong.click();
+  if (document.querySelector('.lp-source')) return false;
+  const range = document.createRange();
+  range.selectNodeContents(strong);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  if (!document.execCommand('insertText', false, '直接编辑')) return false;
+  window.__savedField = host;
+  window.__savedOffset = selection.anchorOffset;
+  return true;
+})()
+""")
+        js(window, "window.__ink.edit.save()")
+        assert wait_js(window, "!window.__ink.edit.state().dirty")
+        assert js(window, "document.activeElement === window.__savedField && window.getSelection().anchorOffset === window.__savedOffset")
+        with open(doc_path, "rb") as source_file:
+            assert source_file.read() == original.replace(b"Live Preview**", "直接编辑**".encode())
+
+        res["stage"] = "structured-roundtrip"
+        check_structured_edits(window, doc_path)
+
+        assert js(window, r"""
+(() => {
+  const root = document.querySelector('#editorLive');
+  const item = root.querySelector('li em');
+  const cell = root.querySelector('tbody td:last-child');
+  for (const target of [item, cell]) {
+    if (!target?.isContentEditable) return false;
+    target.firstChild.appendData('改');
+    target.dispatchEvent(new Event('input', {bubbles:true}));
+  }
+  const text = window.__ink.edit.getText();
+  return text.includes('_强调改_') && text.includes('| 内容 | -12改 |');
+})()
+""")
+
         # ---- 激活一个块并就地修改 ----
         res["stage"] = "activate-and-edit"
         para_idx = 1  # 「一段正文…」所在块
-        js(window, "window.__ink.edit.activate(%d)" % para_idx)
+        js(window, "document.querySelectorAll('.lp-edit-source')[1].click()")
         assert wait_js(window, "window.__ink.edit.state().active === %d" % para_idx)
         ok_set_value = js(window, r"""
 (function(){
@@ -211,35 +345,35 @@ def job(window, tmp_dir, doc_path):
         # ---- 插入代码块 / 公式（工具栏按钮）----
         res["stage"] = "insert-code-and-math"
         js(window, "document.getElementById('editInsertCodeBtn').click()")
-        assert wait_js(window, "window.__ink.edit.getText().indexOf('```\\ncode\\n```') >= 0", timeout=10)
+        assert wait_js(window, "window.__ink.edit.getText().replace(/\\r/g, '').indexOf('```\\ncode\\n```') >= 0", timeout=10)
         js(window, "window.__ink.edit.deactivate()")
         text_after_code = js(window, "window.__ink.edit.getText()")
-        res["insert_code_ok"] = "```\ncode\n```" in text_after_code
+        res["insert_code_ok"] = "```\ncode\n```" in text_after_code.replace("\r", "")
 
         js(window, "document.getElementById('editInsertMathBtn').click()")
-        assert wait_js(window, "window.__ink.edit.getText().indexOf('E = mc^2') >= 0", timeout=10)
+        assert wait_js(window, "window.__ink.edit.getText().replace(/\\r/g, '').indexOf('E = mc^2') >= 0", timeout=10)
         js(window, "window.__ink.edit.deactivate()")
         text_after_math = js(window, "window.__ink.edit.getText()")
-        res["insert_math_ok"] = "E = mc^2" in text_after_math
+        res["insert_math_ok"] = "E = mc^2" in text_after_math.replace("\r", "")
         assert res["insert_code_ok"] and res["insert_math_ok"], (text_after_code, text_after_math)
 
         # ---- 删图：激活含图片的块，光标落在图片语法内，点删图 ----
         res["stage"] = "delete-image"
         blocks_now = json_js(window, "window.__ink.edit.splitBlocks(window.__ink.edit.getText()).map(function(b){return b.text;})")
-        image_idx = next(i for i, t in enumerate(blocks_now) if "![pixel]" in t)
+        image_idx = next(i for i, t in enumerate(blocks_now) if "![像素]" in t)
         js(window, "window.__ink.edit.activate(%d)" % image_idx)
         assert wait_js(window, "window.__ink.edit.state().active === %d" % image_idx)
         js(window, r"""
 (function(){
   var ta = document.querySelector('.lp-block.is-active textarea.lp-source');
-  var pos = ta.value.indexOf('![pixel]');
+  var pos = ta.value.indexOf('![像素]');
   ta.selectionStart = ta.selectionEnd = pos + 2;
 })()
 """)
         js(window, "document.getElementById('editDeleteImageBtn').click()")
         js(window, "window.__ink.edit.deactivate()")
         text_after_delete = js(window, "window.__ink.edit.getText()")
-        res["delete_image_ok"] = "![pixel]" not in text_after_delete
+        res["delete_image_ok"] = "![像素]" not in text_after_delete
         assert res["delete_image_ok"], text_after_delete
 
         # ---- 保存 ----
@@ -248,7 +382,7 @@ def job(window, tmp_dir, doc_path):
         js(window, "window.__ink.edit.save()")
         assert wait_js(window, "window.__ink.edit.state().dirty === false", timeout=10)
         found, saved_disk_text = wait_file_contains(doc_path, "已修改", timeout=10)
-        res["save_matches_disk"] = found and "![pixel]" not in saved_disk_text
+        res["save_matches_disk"] = found and "![像素]" not in saved_disk_text
         assert res["save_matches_disk"], saved_disk_text[:200]
 
         # ---- 冲突路径：外部改写文件后再保存 ----
@@ -344,7 +478,10 @@ def main():
         webview.start(job, (window, tmp_dir, doc_path), gui="edgechromium", private_mode=True)
     finally:
         httpd.shutdown()
-    print("EDIT LIVE VERIFY DONE")
+    with open(RESULT, encoding="utf-8") as report:
+        if not json.load(report)["all_pass"]:
+            raise SystemExit(1)
+    print("EDIT LIVE VERIFY PASS")
 
 
 if __name__ == "__main__":

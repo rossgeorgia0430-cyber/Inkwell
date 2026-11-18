@@ -1,6 +1,6 @@
 // 窗口外壳：侧栏/抽屉、主题、无边框窗口拖动与八向缩放、字号缩放、侧栏拖宽。
 import { state } from "./state.js";
-import { $, api, savePreference, isMacPlatform, confirmDiscard } from "./util.js";
+import { $, api, toast, savePreference, isMacPlatform, confirmDiscard } from "./util.js";
 import { refreshMermaidDiagrams } from "./mermaid.js";
 import { imageViewerIsOpen, zoomImageViewer, zoomImageViewerByWheel, fitImageViewer } from "./viewer.js";
 
@@ -14,6 +14,9 @@ export function toggleSidebar() {
   }
 }
 
+let resizeRequest = 0;
+let resizeTimer;
+
 export function onResize() {
   var drawer = window.innerWidth < 760;
   state.app.classList.toggle("drawer", drawer);
@@ -21,12 +24,16 @@ export function onResize() {
   // 否则 .sidebar-hidden 的 display:none 会让抽屉永远拉不出来。
   if (drawer) state.app.classList.remove("sidebar-hidden");
   else state.app.classList.remove("sidebar-open");
-  var a = api();
-  if (a && a.win_is_maximized) {
-    a.win_is_maximized().then(function (maximized) {
-      document.documentElement.classList.toggle("window-maximized", !!maximized);
+  // 原生窗口完成布局后再读取最大化状态，拖动边框期间合并桥接请求。
+  const request = ++resizeRequest;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    const bridge = api();
+    if (!bridge?.win_is_maximized) return;
+    bridge.win_is_maximized().then(maximized => {
+      if (request === resizeRequest) document.documentElement.classList.toggle("window-maximized", !!maximized);
     });
-  }
+  }, 100);
 }
 
 export function setTheme(t, persist) {
@@ -161,8 +168,29 @@ export function setupResizer() {
   window.addEventListener("mouseup", function () { dragging = false; document.body.style.cursor = ""; });
 }
 
+async function checkUpdate(event) {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    toast("正在检查更新…");
+    const result = await api().check_update();
+    if (!result.ok) return toast(result.error);
+    if (!result.newer) return toast("当前版本 " + result.current + "，暂无更新");
+    if (!result.downloadable) return toast("发现 " + result.latest + "，当前平台暂未提供安装包");
+    if (!window.confirm("发现新版本 " + result.latest + "（当前 " + result.current + "），是否下载安装包？")) return;
+    toast("正在下载安装包…");
+    const download = await api().download_update();
+    if (!download.cancelled) toast(download.ok ? "安装包已校验并保存" : download.error);
+  } catch {
+    toast("更新服务不可用，请稍后重试");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 export function bindChromeEvents() {
   $("sidebarToggle").addEventListener("click", toggleSidebar);
+  $("updateBtn").addEventListener("click", checkUpdate);
   $("themeBtn").addEventListener("click", toggleTheme);
   $("winMin").addEventListener("click", function () { var a = api(); if (a) a.win_minimize(); });
   $("winMax").addEventListener("click", function () { var a = api(); if (a && a.win_toggle_maximize) a.win_toggle_maximize(); });

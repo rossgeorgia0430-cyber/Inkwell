@@ -41,8 +41,7 @@ def wait_js(window, expression, timeout=30):
     return False
 
 
-def probe(window):
-    result = {"stage": "start"}
+def probe(window, result):
     try:
         result["stage"] = "wait-shell"
         assert wait_js(window, "!!(window.__ink && document.querySelector('.mermaid-block'))")
@@ -154,7 +153,10 @@ def main():
             title="Inkwell Mermaid Verify", url=url, width=1180, height=820,
             frameless=True, easy_drag=False, text_select=True,
         )
-        webview.start(probe, window, gui="edgechromium", private_mode=True)
+        result = {}
+        webview.start(probe, (window, result), gui="edgechromium", private_mode=True)
+        if not result.get("ok"):
+            raise SystemExit(1)
     finally:
         httpd.shutdown()
 

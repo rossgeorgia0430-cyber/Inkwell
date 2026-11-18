@@ -55,7 +55,7 @@ MEASURE = r"""
 
 def job(win):
     try:
-        time.sleep(1.0)
+        win.events.loaded.wait(45)
         # 强制宽屏态：需保证 CSS 内宽 >=760 才是非抽屉网格布局。高 DPI（如 150%）下
         # CSS 内宽 = 设备宽/缩放，故设备宽给足（1600）以越过 760 断点。
         win.resize(1600, 980)

@@ -85,7 +85,8 @@ def check_page_sentinels():
 
     hostile = '</script><script>window.pywebview.api.render_path("secret")</script>\u2028&<>'
     page = build_page("<p>safe</p>", "", hostile, hostile, {"font": hostile})
-    assert page.count("<script") == 5  # 3 inline + 2 external scripts
+    assert page.count("<script") == 4
+    assert "/assets/katex/" not in page
     assert "</script><script>window.pywebview" not in page
     assert "\\u003c/script\\u003e" in page
     boot_script = re.search(r"window\.__BOOT__ = (.*?);</script>", page).group(1)

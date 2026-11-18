@@ -8,8 +8,27 @@ import { closeDrawer } from "./chrome.js";
 // ============================================================
 // 公式渲染：直接用 data-latex 调 katex.render（不扫描正文）
 // ============================================================
+let mathLoading;
+
 export function renderMath(root) {
-  if (!window.katex) return;
+  if (!root.querySelector("[data-latex]")) return;
+  if (!window.katex?.render) {
+    if (!mathLoading) {
+      mathLoading = new Promise((resolve, reject) => {
+        const css = document.createElement("link");
+        css.rel = "stylesheet";
+        css.href = "/assets/katex/katex.min.css";
+        const script = document.createElement("script");
+        script.src = "/assets/katex/katex.min.js";
+        script.onload = resolve;
+        script.onerror = () => { css.remove(); script.remove(); reject(); };
+        document.head.append(css, script);
+      });
+    }
+    mathLoading.then(() => { if (root.isConnected && window.katex?.render) renderMath(root); },
+                     () => { mathLoading = null; });
+    return;
+  }
   root.querySelectorAll(".math-block[data-latex]").forEach(function (el) {
     var tex = el.getAttribute("data-latex");
     var btn = el.querySelector(".math-copy-btn");

@@ -38,6 +38,9 @@ _SHELL = """
       <button class="icon-btn" id="searchBtn" title="搜索" aria-label="搜索" data-shortcut="mod+F">
         <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       </button>
+      <button class="icon-btn" id="updateBtn" title="检查更新" aria-label="检查更新">
+        <svg viewBox="0 0 24 24" class="ico"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg>
+      </button>
       <button class="icon-btn" id="themeBtn" title="切换主题" aria-label="主题">
         <svg viewBox="0 0 24 24" class="ico ico-sun"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
         <svg viewBox="0 0 24 24" class="ico ico-moon"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -162,7 +165,6 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
     }}
   }})();
 </script>
-<link rel="stylesheet" href="/assets/katex/katex.min.css">
 <link rel="stylesheet" href="/assets/css/base.css">
 <link rel="stylesheet" href="/assets/css/chrome.css">
 <link rel="stylesheet" href="/assets/css/article.css">
@@ -171,7 +173,6 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
 </head>
 <body>
 {shell}
-<script defer src="/assets/katex/katex.min.js"></script>
 <script type="module" src="/assets/js/main.js"></script>
 </body>
 </html>"""
