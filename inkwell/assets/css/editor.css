@@ -49,7 +49,7 @@ body.edit-mode .tb-title.dirty::before {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
   background: var(--surface);
   user-select: none;
   z-index: 2;
@@ -62,6 +62,7 @@ body.edit-mode .tb-title.dirty::before {
   min-width: 0;
   flex-wrap: wrap;
 }
+.editor-toolbar-right { flex: 0 0 auto; }
 .editor-status {
   margin-left: 8px;
   font-size: 12px;
@@ -116,10 +117,6 @@ body.edit-mode .tb-title.dirty::before {
   background: var(--bg);
   scroll-behavior: auto;
   overflow-anchor: none; /* 避免 WebView 滚动锚定把视口拽到顶部 */
-}
-/* 首次渲染完成前隐藏，防止先闪顶部再跳回 */
-.editor-live-wrap.lp-scroll-pending {
-  visibility: hidden;
 }
 .editor-live {
   width: 100%;
@@ -177,11 +174,8 @@ body.edit-mode .tb-title.dirty::before {
   pointer-events: none;
 }
 
-.lp-view {
-  min-height: 1.5em;
-}
-.lp-view > :first-child { margin-top: 0; }
-.lp-view > :last-child { margin-bottom: 0; }
+/* 子元素的外边距穿过 .lp-block 与相邻块折叠，间距和阅读态一致；只有文档首个元素要贴顶 */
+.editor-live > .lp-block:first-child > .lp-view > :first-child { margin-top: 0; }
 
 /* 空块 / 空文档提示 */
 .lp-empty-hint {
@@ -306,38 +300,113 @@ body.edit-mode .tb-title.dirty::before {
   }
 }
 
-.lp-view [contenteditable] { outline: none; min-height: 1em; white-space: pre-wrap; }
-.lp-view [contenteditable]:empty::before { content: "\\200b"; }
-.lp-edit-source {
+/* 只匹配真正可编辑的元素；不碰 contenteditable="false" 的原子（如行内公式）的排版 */
+.lp-view [contenteditable="true"],
+.lp-view [contenteditable="plaintext-only"] { outline: none; }
+.lp-view [contenteditable="true"]:empty::before,
+.lp-view [contenteditable="plaintext-only"]:empty::before { content: "\200b"; }
+
+/* 块右上角的操作区：不占文档流，悬停或块内聚焦时才出现 */
+.lp-block-tools {
   position: absolute;
   right: 0;
   top: 0;
   transform: translateY(-65%);
-  opacity: 0;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
   pointer-events: none;
+}
+.lp-edit-source,
+.lp-preview-controls > summary {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 1px 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text-soft);
   cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  white-space: nowrap;
 }
-.lp-edit-source.source-only, .lp-block:hover .lp-edit-source, .lp-block:focus-within .lp-edit-source {
+.lp-preview-controls > summary { display: block; list-style: none; }
+.lp-preview-controls > summary::-webkit-details-marker { display: none; }
+.lp-edit-source,
+.lp-preview-controls {
+  opacity: 0;
+  pointer-events: none;
+}
+.lp-edit-source.source-only,
+.lp-block:hover .lp-edit-source,
+.lp-block:focus-within .lp-edit-source,
+.lp-block:hover .lp-preview-controls,
+.lp-block:focus-within .lp-preview-controls,
+.lp-preview-controls[open] {
   opacity: 1;
   pointer-events: auto;
 }
 
-.lp-preview-controls {
-  margin-block: .4em;
+/* 展开后的输入面板：浮在块下方，不把后面的内容往下推；靠近底部时翻到块上方 */
+.lp-preview-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 4;
+  box-sizing: border-box;
+  width: min(36rem, 100%);
+  max-height: min(70vh, 26rem);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: .9rem;
+  line-height: 1.5;
 }
-.lp-preview-controls > summary { cursor: pointer; color: var(--text-soft); }
+.lp-preview-panel.is-above { top: auto; bottom: calc(100% + 4px); }
+.lp-preview-panel[hidden] { display: none; }
 .lp-parameter {
   display: block;
   width: 100%;
   box-sizing: border-box;
   padding: .6em;
   color: inherit;
-  background: var(--surface);
+  background: var(--bg);
   border: 1px solid var(--border);
   font: .9em/1.5 var(--font-mono);
 }
-.lp-view pre[contenteditable] { white-space: pre; }
+.lp-preview-panel [role="status"] { display: block; color: var(--muted); }
+.lp-preview-panel [role="status"]:empty { display: none; }
+
+/* 行内公式的 LaTeX 输入框：浮在公式下方，位置由脚本写入 */
+.lp-inline-formula {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text-soft);
+  font-size: .85rem;
+  line-height: 1.4;
+}
+.lp-inline-formula input {
+  min-width: 12rem;
+  padding: 2px 6px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: .9em var(--font-mono);
+}

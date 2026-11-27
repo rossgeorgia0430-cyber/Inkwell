@@ -274,7 +274,7 @@ def job(window, tmp_dir, doc_path):
         res["enter_state"] = st
         assert st["blocks"] >= 5, st
 
-        assert wait_js(window, "!!document.querySelector('#editorLive strong') && !document.querySelector('.lp-scroll-pending')")
+        assert wait_js(window, "!!document.querySelector('#editorLive strong')")
         with open(doc_path, "rb") as source_file:
             original = source_file.read()
         assert js(window, "window.__ink.edit.getText()").encode() == original

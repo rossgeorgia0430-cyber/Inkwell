@@ -11,7 +11,7 @@ import {
   getEditText, getActiveTextarea, flushActiveBlock, deactivateBlock,
   activateBlock, runLiveRender, refreshLiveRender,
   setEditStatus, setDirty, updateDirtyUI, markDirtyFromBuffer,
-  syncBufferFromBlocks, autosizeTextarea, focusNoScroll,
+  syncBufferFromBlocks, autosizeTextarea, focusNoScroll, editSurfaceShown,
 } from "./live.js";
 
 function pauseWatcher(paused) {
@@ -38,7 +38,6 @@ export function enterEditMode() {
 
   var gen = ++state.editEnterGen;
   var pathAtRequest = state.currentPath;
-  var savedMainScroll = state.main ? state.main.scrollTop : 0;
   a.get_source(pathAtRequest).then(function (res) {
     if (gen !== state.editEnterGen) {
       // 进入被取消：若仍未处于编辑态则恢复监视
@@ -66,13 +65,9 @@ export function enterEditMode() {
     state.editorText = state.editBaseline;
     state.activeBlockIdx = -1;
     state.lastHtmlParts = [];
+    state.lastHtmlTexts = [];
+    state.editSaved = false;
     setDirty(false);
-    // 阅读区可能已滚动：编辑态 main 溢出隐藏需归零，但把滚动位置交给 live 容器
-    if (state.main) state.main.scrollTop = 0;
-    state.pendingEnterScroll = savedMainScroll || 0;
-    state.editRestoreScroll = savedMainScroll;
-    document.body.classList.add("edit-mode");
-    if (state.editorPane) state.editorPane.hidden = false;
     updateDirtyUI();
     setEditStatus("编辑中 · 点击段落即可修改 · " + (res.title || baseName(state.editPath)), "ok");
     runLiveRender({});
@@ -99,6 +94,10 @@ export function exitEditMode(opts) {
   state.editPreviewSeq += 1;
   state.editSaveGen += 1;
   flushActiveBlock();
+  // 编辑区还没显示出来（首次渲染未完成）时，阅读区没动过，不用还原滚动
+  var exitScroll = editSurfaceShown() && state.editorLiveWrap ? state.editorLiveWrap.scrollTop : null;
+  // 没保存过也没有被丢弃的修改时，#content 与磁盘一致，不必重新渲染
+  var needReload = state.editDirty || state.editSaved;
   state.editMode = false;
   setDirty(false);
   state.editBaseline = "";
@@ -107,6 +106,7 @@ export function exitEditMode(opts) {
   state.lpBlocks = [];
   state.activeBlockIdx = -1;
   state.lastHtmlParts = [];
+  state.lastHtmlTexts = [];
   document.body.classList.remove("edit-mode");
   if (state.editorPane) state.editorPane.hidden = true;
   state.editorText = "";
@@ -114,10 +114,9 @@ export function exitEditMode(opts) {
   pauseWatcher(false);
   updateDirtyUI();
   setEditStatus("");
-  var restoreScroll = (typeof state.editRestoreScroll === "number")
-    ? state.editRestoreScroll : (state.main ? state.main.scrollTop : 0);
-  state.editRestoreScroll = null;
-  if (!opts.skipReload && state.currentPath) {
+  // 阅读区在编辑期间是隐藏的，scrollTop 已被夹成 0；切回后立刻写回，避免先显示在顶部
+  if (exitScroll != null && state.main) state.main.scrollTop = exitScroll;
+  if (needReload && !opts.skipReload && state.currentPath) {
     var a = api();
     if (a && a.render_path) {
       var exitGen = state.editEnterGen;
@@ -125,12 +124,10 @@ export function exitEditMode(opts) {
         if (state.editMode || exitGen !== state.editEnterGen) return;
         if (p) {
           renderInto(p);
-          if (state.main) state.main.scrollTop = restoreScroll;
+          if (exitScroll != null && state.main) state.main.scrollTop = exitScroll;
         }
       });
     }
-  } else if (state.main) {
-    state.main.scrollTop = restoreScroll;
   }
 }
 
@@ -206,6 +203,7 @@ function finishSave(p, opts, saveGen, savedText) {
     setDocTitle(p.title || baseName(p.path));
   }
   if (state.content && p.content != null) {
+    state.editSaved = true;
     state.content.innerHTML = p.content || "";
     if (state.toc && p.toc != null) state.toc.innerHTML = p.toc || "";
     initContent();

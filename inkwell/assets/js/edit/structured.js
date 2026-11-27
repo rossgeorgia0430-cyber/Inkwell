@@ -1,4 +1,4 @@
-import { api } from "../util.js";
+import { api, holdHeightWhileImagesLoad } from "../util.js";
 import { state } from "../state.js";
 import { initRenderedFragment } from "../reader.js";
 
@@ -50,49 +50,77 @@ function editSpec(view, source, parts) {
   return { label: "编辑并预览", value: source, write: value => value };
 }
 
+// 预览整体替换会让图片重建：图片加载完之前保持原高度，避免闪一下。
+function replacePreview(preview, html) {
+  const height = preview.offsetHeight;
+  preview.innerHTML = html;
+  initRenderedFragment(preview);
+  holdHeightWhileImagesLoad(preview, height);
+}
+
+// 输入面板浮在块下方；下方放不下而上方放得下时翻到上方
+function placePanel(panel, view) {
+  panel.classList.remove("is-above");
+  const wrap = view.closest(".editor-live-wrap")?.getBoundingClientRect();
+  if (!wrap) return;
+  const block = view.closest(".lp-block").getBoundingClientRect();
+  const height = panel.offsetHeight + 8;
+  if (block.bottom + height > wrap.bottom && block.top - wrap.top > height) panel.classList.add("is-above");
+}
+
+// 返回「编辑…」展开控件，由调用方放进块的操作区；代码块可直接编辑时返回 null。
 export function prepareStructured(view, source, onChange) {
   const parts = fenceParts(source);
-  if (parts && !view.querySelector(".mermaid-block") && editCode(view, parts, onChange)) return;
+  if (parts && !view.querySelector(".mermaid-block") && editCode(view, parts, onChange)) return null;
   const spec = editSpec(view, source, parts);
   const preview = document.createElement("div");
   while (view.firstChild) preview.appendChild(view.firstChild);
+  view.append(preview);
   const details = document.createElement("details");
   details.className = "lp-preview-controls";
   const summary = document.createElement("summary");
   summary.textContent = spec.label;
   details.append(summary);
-  view.append(preview, details);
+  const panel = document.createElement("div");
+  panel.className = "lp-preview-panel";
+  panel.hidden = true;
+  view.append(panel);
   details.addEventListener("toggle", () => {
-    if (!details.open || details.querySelector("textarea")) return;
-    const input = document.createElement("textarea");
-    input.className = "lp-parameter";
-    input.setAttribute("aria-label", spec.label);
-    input.rows = Math.min(12, Math.max(2, spec.value.split("\n").length));
-    input.value = spec.value;
-    details.append(input);
-    input.focus({ preventScroll: true });
-    let revision = 0, timer;
-    const status = document.createElement("span");
-    status.setAttribute("role", "status");
-    details.append(status);
-    input.addEventListener("input", () => {
-      const text = spec.write(input.value);
-      onChange(text);
-      const pending = ++revision;
-      clearTimeout(timer);
-      timer = setTimeout(async () => {
-        if (!view.isConnected) return;
-        try {
-          const result = await api().preview_markdown(text, state.editPath);
-          if (!view.isConnected || revision !== pending) return;
-          if (!result.ok) throw new Error(result.error);
-          preview.innerHTML = result.content;
-          initRenderedFragment(preview);
-          status.textContent = "";
-        } catch {
-          if (revision === pending) status.textContent = "预览暂不可用，编辑内容已保留";
-        }
-      }, 250);
-    });
+    panel.hidden = !details.open;
+    if (!details.open) return;
+    if (!panel.firstChild) fillPanel(panel, view, preview, spec, onChange);
+    placePanel(panel, view);
+    panel.querySelector("textarea").focus({ preventScroll: true });
+  });
+  return details;
+}
+
+function fillPanel(panel, view, preview, spec, onChange) {
+  const input = document.createElement("textarea");
+  input.className = "lp-parameter";
+  input.setAttribute("aria-label", spec.label);
+  input.rows = Math.min(12, Math.max(2, spec.value.split("\n").length));
+  input.value = spec.value;
+  const status = document.createElement("span");
+  status.setAttribute("role", "status");
+  panel.append(input, status);
+  let revision = 0, timer;
+  input.addEventListener("input", () => {
+    const text = spec.write(input.value);
+    onChange(text);
+    const pending = ++revision;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      if (!view.isConnected) return;
+      try {
+        const result = await api().preview_markdown(text, state.editPath);
+        if (!view.isConnected || revision !== pending) return;
+        if (!result.ok) throw new Error(result.error);
+        replacePreview(preview, result.content);
+        status.textContent = "";
+      } catch {
+        if (revision === pending) status.textContent = "预览暂不可用，编辑内容已保留";
+      }
+    }, 250);
   });
 }

@@ -8,6 +8,16 @@ const originalRuns = new WeakMap();
 
 const entities = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
 
+// 浮层相对 .lp-block 定位，贴在目标下方且不超出块的左右边界
+function placeBelow(floating, target) {
+  const block = target.closest(".lp-block");
+  const blockRect = block.getBoundingClientRect();
+  const rect = target.getBoundingClientRect();
+  const left = Math.min(rect.left - blockRect.left, blockRect.width - floating.offsetWidth);
+  floating.style.left = Math.max(0, left) + "px";
+  floating.style.top = rect.bottom - blockRect.top + 4 + "px";
+}
+
 function bindInlineFormula(node, raw) {
   node.contentEditable = "false";
   node.tabIndex = 0;
@@ -25,7 +35,8 @@ function bindInlineFormula(node, raw) {
     input.value = node.dataset.latex;
     label.append(input);
     view.append(label);
-    input.focus();
+    placeBelow(label, node);
+    input.focus({ preventScroll: true });
     let timer;
     input.addEventListener("input", () => {
       const value = input.value;
@@ -194,7 +205,7 @@ function htmlFields(view, source) {
     field.append(node);
     const value = tokens[i][0];
     return { field, value, from: tokens[i].index, to: tokens[i].index + value.length,
-      serialize: () => field.innerText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") };
+      serialize: () => field.textContent.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") };
   });
 }
 
@@ -276,12 +287,20 @@ export function prepareVisualBlock(view, source, onChange) {
       onChange(parts.join("") + source.slice(end));
     });
   }
-  if (!fields.length) prepareStructured(view, source, onChange);
+  const controls = fields.length ? null : prepareStructured(view, source, onChange);
+  appendBlockTools(view, controls, !fields.length);
+}
+
+// 块右上角的操作区：「源码」按钮，可选的「编辑…」控件。sourceOnly 时按钮常显。
+export function appendBlockTools(view, controls, sourceOnly) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "lp-edit-source";
   button.textContent = "源码";
-  button.classList.toggle("source-only", !fields.length);
+  button.classList.toggle("source-only", sourceOnly);
   button.setAttribute("aria-label", "编辑此段 Markdown 源码");
-  view.appendChild(button);
+  const tools = document.createElement("div");
+  tools.className = "lp-block-tools";
+  tools.append(...(controls ? [controls, button] : [button]));
+  view.appendChild(tools);
 }

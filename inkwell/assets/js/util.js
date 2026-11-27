@@ -85,6 +85,18 @@ export function toast(msg) {
   state.toastTimer = setTimeout(function () { t.classList.remove("show"); }, 2600);
 }
 
+// 新插入的内容里有图片还没加载完时，先按旧高度撑住，避免整体塌缩再弹回；加载完释放。
+export function holdHeightWhileImagesLoad(el, height) {
+  const loading = Array.from(el.querySelectorAll("img")).filter(image => !image.complete);
+  if (!loading.length || !(height > 0)) return;
+  const held = height + "px";
+  el.style.minHeight = held;
+  Promise.all(loading.map(image => new Promise(resolve => {
+    image.addEventListener("load", resolve, { once: true });
+    image.addEventListener("error", resolve, { once: true });
+  }))).then(() => { if (el.style.minHeight === held) el.style.minHeight = ""; });
+}
+
 // 有未保存修改时统一征求用户确认；message 按各调用场景措辞。
 export function confirmDiscard(message) {
   return !state.editDirty || window.confirm(message);

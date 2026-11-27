@@ -68,6 +68,10 @@ _SHELL = """
       <div class="article-wrap" id="articleWrap">
         <article class="article" id="content">__CONTENT__</article>
         <section class="editor-pane" id="editorPane" hidden aria-label="文档编辑器">
+          <!-- Obsidian 风格：在最终渲染效果中块级编辑；完整源码缓冲在 JS 里是字符串，不落 DOM -->
+          <div class="editor-live-wrap" id="editorLiveWrap">
+            <div class="editor-live article" id="editorLive" tabindex="0" aria-label="所见即所得编辑区"></div>
+          </div>
           <div class="editor-toolbar" id="editorToolbar">
             <div class="editor-toolbar-left">
               <button type="button" class="edit-tool-btn" id="editSaveBtn" title="保存" data-shortcut="mod+S">保存</button>
@@ -83,10 +87,6 @@ _SHELL = """
             <div class="editor-toolbar-right">
               <button type="button" class="edit-tool-btn ghost" id="editExitBtn" title="退出编辑 (Esc)">完成</button>
             </div>
-          </div>
-          <!-- Obsidian 风格：在最终渲染效果中块级编辑；完整源码缓冲在 JS 里是字符串，不落 DOM -->
-          <div class="editor-live-wrap" id="editorLiveWrap">
-            <div class="editor-live article" id="editorLive" tabindex="0" aria-label="所见即所得编辑区"></div>
           </div>
         </section>
       </div>

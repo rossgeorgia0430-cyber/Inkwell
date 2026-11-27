@@ -34,8 +34,9 @@ export const state = {
   // 编辑模式：Obsidian 风格 Live Preview
   editMode: false, editDirty: false, editBaseline: "", editMtimeNs: null, editPath: null,
   editPreviewSeq: 0, editEnterGen: 0, editSaveGen: 0, editSaving: false,
+  editSaved: false, // 本次编辑会话保存过：#content 已被保存结果替换
   editorText: "",
   editorLive: null, editorLiveWrap: null, editorPane: null, editorStatus: null,
-  lpBlocks: [], activeBlockIdx: -1, lastHtmlParts: [], lpActivating: false,
-  pendingEnterScroll: null, editRestoreScroll: null,
+  lpBlocks: [], activeBlockIdx: -1, lpActivating: false,
+  lastHtmlParts: [], lastHtmlTexts: [], // 每块缓存的 HTML 及其对应的源码
 };
