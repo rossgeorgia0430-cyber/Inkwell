@@ -80,12 +80,13 @@
   overflow-x: auto;
   font-size: .95em;
   /* 宽表格的横向滚动提示：两侧边缘的渐隐阴影。前两层“遮罩”随内容滚动，
-     滚到头或不溢出时盖住后两层固定阴影，只有该方向还有内容时阴影才露出来。 */
+     滚到头或不溢出时盖住后两层固定阴影，只有该方向还有内容时阴影才露出来。
+     阴影内缩 1px：WebKit 在小数像素宽度下，最外一列盖不到，会漏出一条竖线。 */
   background:
     linear-gradient(to right, var(--table-cover, var(--bg)) 50%, transparent) left center / 36px 100% no-repeat local,
     linear-gradient(to left, var(--table-cover, var(--bg)) 50%, transparent) right center / 36px 100% no-repeat local,
-    linear-gradient(to right, var(--scroll-shade), transparent) left center / 12px 100% no-repeat scroll,
-    linear-gradient(to left, var(--scroll-shade), transparent) right center / 12px 100% no-repeat scroll;
+    linear-gradient(to right, var(--scroll-shade), transparent) left 1px center / 12px 100% no-repeat scroll,
+    linear-gradient(to left, var(--scroll-shade), transparent) right 1px center / 12px 100% no-repeat scroll;
 }
 .article th, .article td {
   border: none;
