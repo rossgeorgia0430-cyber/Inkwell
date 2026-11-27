@@ -15,7 +15,7 @@
 - **代码双击高亮**：在代码块内双击任意标识符，高亮该 token 的所有出现（VSCode 风格），`Esc` 或点击别处清除。
 - **自适应布局**：任意宽高比窗口都可用；窗口变窄时目录自动收起为抽屉。
 - **实时刷新**：源文件被外部修改时自动重载（保留滚动位置）；编辑模式中会暂停监视，避免覆盖未保存内容。
-- **原地编辑**：用标题栏铅笔或 `Ctrl+E` 进入编辑模式。可以直接编辑标题、段落、列表、表格、代码正文和可映射的 HTML 文字。点击行内公式可改 LaTeX。展开块级公式、流程图或独立图片下方的控件，可以边看预览边改公式、图示定义或图片说明。复杂组合语法可展开「编辑并预览」，「源码」可修改段落中的全部标记。用 `Ctrl+S` 将修改保存回原文件。
+- **原地编辑**：用标题栏铅笔或 `Ctrl+E` 进入编辑模式。可以直接编辑标题、段落、列表、表格、代码正文和可映射的 HTML 文字。点击行内公式可改 LaTeX。块右上角的「编辑…」会打开浮层，可以边看预览边改公式、图示定义或图片说明；复杂组合语法用「编辑并预览」，「源码」可修改这一块的全部标记。源码框里内嵌图片的 base64 数据显示为一个短记号，保存时还原。单击图片可选中，按 `Delete` 或工具栏的「删除图片」删除，双击放大；截图可以直接粘贴或拖入，按内嵌图片插入。编辑工具栏停靠在窗口底部，进出编辑模式时正文位置不变。用 `Ctrl+S` 将修改保存回原文件；有未保存修改时关闭窗口会先询问。
 - **检查更新**：点击标题栏的下载图标，匿名查询 GitHub 正式发行版。发现适配当前平台的新版安装包时，可选择保存位置。下载完成后会核对文件长度和 SHA-256。检查和下载均由宿主发起，只发送通用客户端标识。仓库标识在客户端做了可逆混淆，服务端仍能看到连接的出口 IP。
 
 ## 快捷键
@@ -89,7 +89,7 @@ open Inkwell.app
 
 Windows 上运行 `python tools/run_windows_tests.py` 可执行整套检查。任一脚本或 WebView2 结果失败，命令会以非零状态退出。
 
-- **非 GUI**（纯逻辑，跑完直接打印结果）：`verify_updates.py`、`verify_host.py`、`verify_edit_mode.py`、`verify_embedded_images.py`、`verify_render_security.py`、`verify_lp_markers.py`、`verify_platform_gates.py`。
+- **非 GUI**（纯逻辑，跑完直接打印结果）：`verify_updates.py`、`verify_host.py`、`verify_edit_mode.py`、`verify_embedded_images.py`、`verify_render_security.py`、`verify_lp_markers.py`、`verify_platform_gates.py`、`verify_startup_prerender.py`、`verify_edit_blocks.py`（后者用本机 node 加载编辑模式的纯文本模块，没有 node 时跳过）。
 - **需要 WebView2**：其余 `verify_*.py`（如 `verify_viewer` / `verify_mermaid` / `verify_edit_live` / `verify_copy`）。运行时会弹出一个 WebView2 窗口，自动跑完并关闭，结果写入 `tools/_*_result.json`（看其中的 `ok` / `all_pass` 字段）。
 - `verify_mac_ui_thread.py` 是 macOS 专用检查（不弹窗，但要求 `sys.platform == "darwin"`），在 Windows 上运行会直接断言失败。
 
