@@ -177,6 +177,36 @@ export function initMermaidDiagrams(root) {
   });
 }
 
+// 每轮新的延后渲染递增一次，上一轮还在排队的块据此作废。
+let deferredRound = 0;
+
+// 正文首帧不等图示：首帧之后视口内的先画，逐个渲染并在块与块之间让出主线程。
+// 不做滚动到才渲染的懒加载：WebKit 没有滚动锚定，滚动中改变上方高度会让页面跳动。
+export function initMermaidDiagramsDeferred(root) {
+  const round = ++deferredRound;
+  if (!root) return;
+  const blocks = Array.from(root.querySelectorAll(".mermaid-block[data-mermaid-source]"));
+  blocks.forEach(function (block) { setMermaidView(block, false); });
+  if (!blocks.length) return;
+  requestAnimationFrame(function () {
+    setTimeout(function () { renderDeferredBlocks(blocks, round); }, 0);
+  });
+}
+
+async function renderDeferredBlocks(blocks, round) {
+  const inViewport = function (block) {
+    const rect = block.getBoundingClientRect();
+    return rect.bottom > 0 && rect.top < window.innerHeight;
+  };
+  const visible = blocks.filter(inViewport);
+  const queue = visible.concat(blocks.filter(function (block) { return visible.indexOf(block) < 0; }));
+  for (const block of queue) {
+    if (round !== deferredRound) return;
+    await renderMermaidBlock(block, false);
+    await new Promise(function (resolve) { setTimeout(resolve, 0); });
+  }
+}
+
 export function refreshMermaidDiagrams() {
   if (!getMermaidApi()) return;
   var roots = [];

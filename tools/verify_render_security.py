@@ -78,6 +78,17 @@ def check_fences_and_images():
     assert not blocks and protected.startswith("````python")
 
 
+def check_crlf_matches_lf():
+    from inkwell.render import render_markdown
+
+    lf = ("# 标题\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n```python:demo.py\nx = 1\n```\n\n"
+          "| a | b |\n| - | - |\n| 1 | 2 |\n\n$$E=mc^2$$\n\n行内 $a+b$ 结尾\n")
+    expected = render_markdown(lf)
+    assert "mermaid-block" in expected[0] and "demo.py" in expected[0]
+    assert render_markdown(lf.replace("\n", "\r\n")) == expected
+    assert render_markdown(lf.replace("\n", "\r")) == expected
+
+
 def check_page_sentinels():
     page = build_page("<p>__TOC__ __CONTENT__</p>", "<b>UNIQUE_TOC</b>", "sentinel")
     assert page.count("UNIQUE_TOC") == 1
@@ -97,6 +108,7 @@ def check_page_sentinels():
 def main():
     check_security()
     check_fences_and_images()
+    check_crlf_matches_lf()
     check_page_sentinels()
     print("render security: PASS")
 

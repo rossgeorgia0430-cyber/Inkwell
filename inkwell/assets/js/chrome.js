@@ -24,6 +24,8 @@ export function onResize() {
   // 否则 .sidebar-hidden 的 display:none 会让抽屉永远拉不出来。
   if (drawer) state.app.classList.remove("sidebar-hidden");
   else state.app.classList.remove("sidebar-open");
+  // macOS 宿主读不到最大化状态（恒为 False），不必为它白跑桥调用。
+  if (isMacPlatform()) return;
   // 原生窗口完成布局后再读取最大化状态，拖动边框期间合并桥接请求。
   const request = ++resizeRequest;
   clearTimeout(resizeTimer);
@@ -114,15 +116,23 @@ export function setupWindowDrag() {
 // 字号缩放：Ctrl + 鼠标滚轮 调整正文字号（em 体系下整体自适应），持久化
 // ============================================================
 const FONT_MIN = 10, FONT_MAX = 26, FONT_DEFAULT = 15;
+// 鼠标滚轮一格 deltaY 约 100，对应一档；触控板和小位移滚轮的 deltaY 累计满一档才生效，反向滚动自然抵消。
+const FONT_WHEEL_STEP = 100;
+let fontWheelDelta = 0;
 function readerFont() {
   var v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--reader-font"));
   return isNaN(v) ? FONT_DEFAULT : v;
 }
+let fontSaveTimer;
 function setReaderFont(px, persist) {
   px = Math.max(FONT_MIN, Math.min(FONT_MAX, Math.round(px * 2) / 2));
   document.documentElement.style.setProperty("--reader-font", px + "px");
   try { localStorage.setItem("inkwell-font", px); } catch (e) { /* 同上：本地存储不可用时仅放弃持久化 */ }
-  if (persist !== false) savePreference("font", px);
+  // 触控板一次手势会连续改很多次字号，写配置文件要等它停下来。
+  if (persist !== false) {
+    clearTimeout(fontSaveTimer);
+    fontSaveTimer = setTimeout(() => savePreference("font", px), 300);
+  }
 }
 export function setupFontZoom(preferredFont) {
   var saved = parseFloat(preferredFont);
@@ -136,7 +146,11 @@ export function setupFontZoom(preferredFont) {
       zoomImageViewerByWheel(e.deltaY, e.clientX, e.clientY);
       return;
     }
-    setReaderFont(readerFont() + (e.deltaY < 0 ? 0.5 : -0.5));
+    fontWheelDelta += e.deltaY;
+    const steps = Math.trunc(fontWheelDelta / FONT_WHEEL_STEP);
+    if (!steps) return;
+    fontWheelDelta -= steps * FONT_WHEEL_STEP;
+    setReaderFont(readerFont() - steps * 0.5);
   }, { passive: false });
   // Ctrl + 加/减/0：键盘缩放与重置
   document.addEventListener("keydown", function (e) {

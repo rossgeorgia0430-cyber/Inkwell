@@ -580,8 +580,16 @@ class Api:
             log_exception()
             return False
 
+    def set_unsaved_changes(self, dirty):
+        """有未保存修改时，Alt+F4、⌘W、⌘Q 这类绕过页面的关闭也要先经 pywebview 的确认框。"""
+        if self._window is not None:
+            self._window.confirm_close = bool(dirty)
+
     def win_close(self):
         self._closing = True
+        # 页面的关闭按钮已经问过一次，不能让 pywebview 再问第二遍。
+        if self._window is not None:
+            self._window.confirm_close = False
         if IS_MACOS:
             from .host_mac import schedule_window_close
             schedule_window_close(self._window)

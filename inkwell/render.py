@@ -295,6 +295,8 @@ def protect_inline_code(md_text):
 
 def render_markdown(md_text, base_dir=None):
     """Markdown -> (html, toc_html)。"""
+    # 围栏等规则只认 LF；渲染不需要保留 CR，保存时的换行风格由读写层负责。
+    md_text = md_text.replace("\r\n", "\n").replace("\r", "\n")
     md_text, code_blocks = protect_code_blocks(md_text)
     md_text, inline_code = protect_inline_code(md_text)
     md_text = _preprocess_markdown_images(md_text, base_dir)

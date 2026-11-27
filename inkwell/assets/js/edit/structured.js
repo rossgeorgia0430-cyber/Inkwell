@@ -1,4 +1,4 @@
-import { api, holdHeightWhileImagesLoad } from "../util.js";
+import { api, holdHeightWhileImagesLoad, disableTextSubstitution } from "../util.js";
 import { state } from "../state.js";
 import { initRenderedFragment } from "../reader.js";
 import { withReferenceDefinitions } from "./blocks.js";
@@ -34,6 +34,7 @@ function editCode(view, parts, onChange) {
   while (walker.nextNode()) last = walker.currentNode;
   if (last) last.deleteData(last.length - 1, 1);
   pre.contentEditable = "plaintext-only";
+  disableTextSubstitution(pre);
   pre.setAttribute("aria-label", "编辑代码");
   pre.addEventListener("input", () => onChange(fencedText(parts, pre.innerText)));
   return true;
@@ -100,6 +101,7 @@ export function prepareStructured(view, source, onChange) {
 function fillPanel(panel, view, preview, spec, onChange) {
   const input = document.createElement("textarea");
   input.className = "lp-parameter";
+  disableTextSubstitution(input);
   input.setAttribute("aria-label", spec.label);
   input.value = collapseForEdit(spec.value);
   input.rows = Math.min(12, Math.max(2, input.value.split("\n").length));

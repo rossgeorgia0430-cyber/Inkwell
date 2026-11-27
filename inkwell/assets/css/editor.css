@@ -51,7 +51,7 @@ body.edit-mode .tb-title.dirty::before {
   padding: 8px 12px;
   border-top: 1px solid var(--border);
   background: var(--surface);
-  user-select: none;
+  -webkit-user-select: none; user-select: none;
   z-index: 2;
 }
 .editor-toolbar-left,
@@ -182,7 +182,7 @@ body.edit-mode .tb-title.dirty::before {
   margin: 0 !important;
   color: var(--faint);
   font-style: italic;
-  user-select: none;
+  -webkit-user-select: none; user-select: none;
   pointer-events: none;
 }
 

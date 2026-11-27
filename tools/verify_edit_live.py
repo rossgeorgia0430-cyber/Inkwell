@@ -319,6 +319,15 @@ def json_js(window, expression):
     return json.loads(window.evaluate_js("JSON.stringify(" + expression + ")"))
 
 
+def wait_until(predicate, timeout=5):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def wait_file_contains(path, needle, timeout=10):
     end = time.monotonic() + timeout
     text = ""
@@ -522,8 +531,13 @@ def job(window, tmp_dir, doc_path):
   return true;
 })()
 """)
+        # 有未保存修改时宿主窗口要开启关闭确认（Alt+F4 等绕过页面的关闭靠它拦截），保存后关掉。
+        res["confirm_close_on_dirty"] = wait_until(lambda: window.confirm_close is True)
+        assert res["confirm_close_on_dirty"], window.confirm_close
         js(window, "window.__ink.edit.save()")
         assert wait_js(window, "!window.__ink.edit.state().dirty")
+        res["confirm_close_off_after_save"] = wait_until(lambda: window.confirm_close is False)
+        assert res["confirm_close_off_after_save"], window.confirm_close
         assert js(window, "document.activeElement === window.__savedField && window.getSelection().anchorOffset === window.__savedOffset")
         with open(doc_path, "rb") as source_file:
             assert source_file.read() == original.replace(b"Live Preview**", "直接编辑**".encode())
@@ -667,6 +681,7 @@ def job(window, tmp_dir, doc_path):
             and res["insert_code_ok"] and res["insert_math_ok"]
             and res["delete_image_ok"]
             and res["save_matches_disk"]
+            and res["confirm_close_on_dirty"] and res["confirm_close_off_after_save"]
             and res["conflict_reject_ok"] and res["conflict_force_ok"]
             and res["edit_fidelity_ok"] and res["embedded_images_ok"]
             and res["exit_body_class_ok"] and res["exit_content_visible_ok"]
@@ -681,6 +696,7 @@ def job(window, tmp_dir, doc_path):
         with open(RESULT, "w", encoding="utf-8") as f:
             json.dump(res, f, ensure_ascii=False, indent=2)
         print(json.dumps({"stage": res.get("stage"), "all_pass": res.get("all_pass")}, ensure_ascii=False))
+        window.confirm_close = False  # 断言失败时仍处于有未保存修改状态，destroy 不能被确认框卡住
         try:
             window.destroy()
         except Exception:

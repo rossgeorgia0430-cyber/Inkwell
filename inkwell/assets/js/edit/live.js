@@ -1,7 +1,7 @@
 // 正文直接编辑与段落源码编辑共用同一份 Markdown 缓冲。
 // Markdown 全文（state.editorText）为真相，state.lpBlocks 是它的分块缓存。
 import { state } from "../state.js";
-import { $, api, toast, formatModShortcut, holdHeightWhileImagesLoad, imagesSettled } from "../util.js";
+import { $, api, toast, formatModShortcut, isImeKeydown, disableTextSubstitution, holdHeightWhileImagesLoad, imagesSettled } from "../util.js";
 import { initRenderedFragment } from "../reader.js";
 import {
   classifyBlockKind, splitMarkdownBlocks, joinMarkdownBlocks,
@@ -77,6 +77,8 @@ export function setDirty(next) {
   if (state.editDirty === !!next) return;
   state.editDirty = !!next;
   updateDirtyUI();
+  var bridge = api();
+  if (bridge && bridge.set_unsaved_changes) bridge.set_unsaved_changes(state.editDirty);
 }
 
 export function getActiveTextarea() {
@@ -346,7 +348,7 @@ function restoreBlockView(idx) {
 function createBlockTextarea(idx, value) {
   var ta = document.createElement("textarea");
   ta.className = "lp-source";
-  ta.spellcheck = false;
+  disableTextSubstitution(ta);
   ta.setAttribute("aria-label", "编辑块 " + (idx + 1));
   ta.value = collapseForEdit(value || "");
   bindActiveTextarea(ta);
@@ -511,7 +513,7 @@ function onActiveTextareaKeydown(e) {
     return;
   }
   if (e.key === "Escape") {
-    if (ta._lpComposing || ta.isComposing) return;
+    if (ta._lpComposing || isImeKeydown(e)) return;
     e.preventDefault();
     e.stopPropagation();
     deactivateBlock();

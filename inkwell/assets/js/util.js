@@ -12,6 +12,16 @@ export function isMacPlatform() {
   return (window.__BOOT__ && window.__BOOT__.platform) === "darwin";
 }
 
+// Safari 先发 compositionend 再发那次 keydown（keyCode 229、isComposing 已为 false），两个条件都要判断。
+export function isImeKeydown(e) { return e.isComposing || e.keyCode === 229; }
+
+// Safari 的智能引号、自动纠错会改写 Markdown、代码和 LaTeX 的输入，可编辑字段统一关掉。
+export function disableTextSubstitution(el) {
+  el.spellcheck = false;
+  el.setAttribute("autocorrect", "off");
+  el.setAttribute("autocapitalize", "off");
+}
+
 export function formatModShortcut(spec) {
   if (isMacPlatform()) {
     return spec.replace(/^mod\+Shift\+/i, "⇧⌘").replace(/^mod\+/i, "⌘");

@@ -1,7 +1,7 @@
 // 阅读态：公式渲染、代码复制按钮、双击高亮、目录 + scroll spy、搜索、initContent。
 import { state } from "./state.js";
-import { $, escapeReg, writeClipboard, flash, idSelector, inRenderableRoot } from "./util.js";
-import { toggleMermaid, zoomMermaid, initMermaidDiagrams } from "./mermaid.js";
+import { $, escapeReg, isImeKeydown, writeClipboard, flash, idSelector, inRenderableRoot } from "./util.js";
+import { toggleMermaid, zoomMermaid, initMermaidDiagrams, initMermaidDiagramsDeferred } from "./mermaid.js";
 import { copyImage, setupImageCopySupport } from "./viewer.js";
 import { closeDrawer } from "./chrome.js";
 
@@ -345,18 +345,19 @@ export function closeSearch() {
 // initContent 用于整篇正文（另加目录与搜索状态重置）；Live Preview 的单个块
 // 视图只需要这部分公共装配，见 initRenderedFragment。
 // ============================================================
-export function initRenderedFragment(root) {
+export function initRenderedFragment(root, deferDiagrams) {
   if (!root) return;
   renderMath(root);
   addCodeCopyButtons(root);
-  initMermaidDiagrams(root);
+  if (deferDiagrams) initMermaidDiagramsDeferred(root);
+  else initMermaidDiagrams(root);
   setupImageCopySupport(root);
 }
 
 export function initContent() {
   clearSearch();
   clearVarHighlights();
-  initRenderedFragment(state.content);
+  initRenderedFragment(state.content, true);
   collectHeadings();
   state.activeLink = null;          // 换文件后旧目录链接失效，重置激活引用
   unlockSpy();
@@ -381,6 +382,7 @@ export function bindReaderEvents() {
     state.searchTimer = setTimeout(function () { runSearch(q); }, 160);
   });
   state.searchInput.addEventListener("keydown", function (e) {
+    if (isImeKeydown(e)) return;
     if (e.key === "Enter") { e.preventDefault(); nextHit(e.shiftKey ? -1 : 1); }
     else if (e.key === "Escape") { closeSearch(); }
   });

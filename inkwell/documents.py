@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -112,6 +113,10 @@ def write_text_atomic(path, text, encoding="utf-8", expected_mtime_ns=None):
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
         tmp.write_bytes(data)
+        if os.name != "nt" and path.exists():
+            # 临时文件是新建的，不带原文件的权限位（如 644），替换前先抄过去。
+            # Windows 只有只读位，抄过去会让失败后的临时文件无法删除。
+            shutil.copymode(path, tmp)
         check_conflict()
         os.replace(tmp, path)
     finally:

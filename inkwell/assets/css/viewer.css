@@ -80,8 +80,8 @@ img.is-selected { outline: 2px solid var(--accent); outline-offset: 2px; }
 .image-zoom-btn:hover { background: rgba(255,255,255,.10); color: #fff; }
 .image-zoom-btn:disabled { opacity: .32; cursor: default; }
 .image-zoom-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.image-zoom-level { min-width: 48px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; color: #c9c5bb; user-select: none; }
-.image-zoom-hint { font-size: 11px; color: #8f8b81; padding: 0 6px 0 2px; user-select: none; }
+.image-zoom-level { min-width: 48px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; color: #c9c5bb; -webkit-user-select: none; user-select: none; }
+.image-zoom-hint { font-size: 11px; color: #8f8b81; padding: 0 6px 0 2px; -webkit-user-select: none; user-select: none; }
 .image-viewer-open .main { overflow: hidden; }
 
 /* 灯箱内的 SVG 图示（与 .image-viewer-image 共用同一套缩放/滚动体系）。 */

@@ -1,6 +1,6 @@
 // 入口：boot、事件绑定、全局快捷键、window.__ink 测试钩子。
 import { state } from "./state.js";
-import { $, api, isMacPlatform, applyShortcutTitles } from "./util.js";
+import { $, api, isMacPlatform, applyShortcutTitles, isImeKeydown } from "./util.js";
 import {
   setTheme, setDocTitle, onResize, setupWindowResize, setupWindowDrag, setupFontZoom,
   setupResizer, toggleSidebar, bindChromeEvents,
@@ -66,7 +66,7 @@ function handleEditModeShortcut(e, ctrl) {
 }
 
 function onGlobalKeydown(e) {
-  if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+  if (e.defaultPrevented || isImeKeydown(e)) return;
   var ctrl = e.ctrlKey || e.metaKey;
   // 编辑器内的 Ctrl+S / Tab 由 textarea 自己处理；此处拦截全局
   if (ctrl && (e.key === "e" || e.key === "E")) {

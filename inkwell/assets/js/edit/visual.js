@@ -1,3 +1,4 @@
+import { isImeKeydown, disableTextSubstitution } from "../util.js";
 import { renderMath } from "../reader.js";
 import { prepareStructured } from "./structured.js";
 import { scanLinkDestination } from "./blocks.js";
@@ -73,6 +74,7 @@ function bindInlineFormula(node, raw) {
     label.className = "lp-inline-formula";
     label.textContent = "LaTeX ";
     const input = document.createElement("input");
+    disableTextSubstitution(input);
     input.value = node.dataset.latex;
     label.append(input);
     view.append(label);
@@ -90,7 +92,7 @@ function bindInlineFormula(node, raw) {
     });
     input.addEventListener("blur", () => label.remove());
     input.addEventListener("keydown", event => {
-      if (!event.isComposing && (event.key === "Enter" || event.key === "Escape")) {
+      if (!isImeKeydown(event) && (event.key === "Enter" || event.key === "Escape")) {
         event.preventDefault();
         node.focus();
       }
@@ -397,6 +399,7 @@ export function prepareVisualBlock(view, source, onChange, onRevert) {
   for (const entry of fields) {
     const field = entry.field;
     field.contentEditable = entry.serialize ? "plaintext-only" : "true";
+    disableTextSubstitution(field);
     field.setAttribute("role", "textbox");
     field.setAttribute("aria-label", "编辑正文");
     field.addEventListener("paste", event => {

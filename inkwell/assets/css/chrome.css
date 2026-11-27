@@ -21,7 +21,7 @@
   padding: 0 6px 0 10px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  user-select: none;
+  -webkit-user-select: none; user-select: none;
   position: relative;
   z-index: 30;
 }
