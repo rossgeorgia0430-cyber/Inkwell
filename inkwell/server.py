@@ -52,6 +52,9 @@ def _guess_type(path: Path) -> str:
     ext = path.suffix.lower()
     if ext in _EXTRA_MIME:
         return _EXTRA_MIME[ext]
+    # mimetypes 首次调用要枚举注册表，并发的图片请求会各初始化一遍；图片扩展名直接查表。
+    if ext in images.EXT_TO_MIME:
+        return images.EXT_TO_MIME[ext]
     typ, _ = mimetypes.guess_type(str(path))
     return typ or "application/octet-stream"
 

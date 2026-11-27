@@ -218,10 +218,11 @@ def main():
 
     init_path = _initial_file(sys.argv)
     api._init_path = init_path
+    api.start_prerender()
     title = Path(init_path).name if init_path else APP_NAME
 
-    # 先给 WebView 一个极轻的首帧；Markdown/Pygments 导入、base64 解码和正文
-    # 渲染全部推迟到前端调用 pull_initial() 之后，尤其能改善大图片文档的感知启动速度。
+    # 先给 WebView 一个极轻的首帧；Markdown/Pygments 导入、base64 解码和正文渲染
+    # 放到后台线程，与窗口和桥的启动并行，pull_initial() 到达时直接取结果。
     _server.set_page(build_page(_loading_content(title), "", title, init_path,
                                 preferences=api.preferences))
     httpd, url = _server.start_server()

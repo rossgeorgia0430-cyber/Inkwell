@@ -22,9 +22,8 @@ from markdown.extensions.sane_lists import SaneListExtension
 from markdown.extensions.tables import TableExtension
 from markdown.extensions.toc import TocExtension
 from pygments import highlight as _pyg_highlight
-from pygments.lexers import get_lexer_by_name, guess_lexer, TextLexer
+from pygments.lexers import get_all_lexers, get_lexer_by_name, TextLexer
 from pygments.formatters import HtmlFormatter
-from pygments.util import ClassNotFound
 
 from . import images
 from . import sanitize
@@ -32,6 +31,9 @@ from . import sanitize
 _MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)', re.MULTILINE)
 _HTML_IMG_RE = re.compile(r'<img\s+([^>]*?)(?:/>|>)', re.IGNORECASE | re.DOTALL)
 _SRC_ATTR_RE = re.compile(r'''src\s*=\s*(?:["']([^"']+)["']|([^\s>]+))''', re.IGNORECASE)
+# 引用式图片定义 `[id]: data:...`：整段 data URI 留给 python-markdown 的块处理器，会在几 MB 的块上反复跑正则。
+_MD_REF_DATA_URI_RE = re.compile(r'^( {0,3}\[[^\]\n]+\]:[ \t]*<?)(data:[^\s>]+)',
+                                 re.MULTILINE | re.IGNORECASE)
 
 
 def _preprocess_markdown_images(md_text, base_dir):
@@ -44,7 +46,9 @@ def _preprocess_markdown_images(md_text, base_dir):
         original_src = match.group(2).strip()
         title = ""
         src = original_src
-        title_match = re.match(r'^(.+?)\s+["\'](.+?)["\']$', original_src)
+        # 标题正则会对几 MB 的 base64 惰性逐字符扫描；地址以引号结尾才可能带标题。
+        title_match = (re.match(r'^(.+?)\s+["\'](.+?)["\']$', original_src)
+                       if original_src.endswith(('"', "'")) else None)
         if title_match:
             src = title_match.group(1).strip()
             title = title_match.group(2)
@@ -54,6 +58,8 @@ def _preprocess_markdown_images(md_text, base_dir):
         return f'![{alt_text}]({localized})'
 
     result = _MD_IMAGE_RE.sub(replace_md_image, md_text)
+    result = _MD_REF_DATA_URI_RE.sub(
+        lambda m: m.group(1) + images.localize_image_src(m.group(2), base_dir), result)
 
     def replace_html_img(match):
         attrs_str = match.group(1)
@@ -134,6 +140,10 @@ def restore_placeholders(text, placeholders):
 # 支持 ```lang、```lang:path、```lang path；缩进代码块仍走 markdown（无头部）。
 # ---------------------------------------------------------------------------
 _CODE_FORMATTER = HtmlFormatter(cssclass='codehilite', nowrap=False)
+# 不在 Pygments 自带别名里的语言名直接当纯文本：get_lexer_by_name 找不到时会扫描全部
+# 已安装包的 entry points，guess_lexer 还会把所有 lexer 模块导入一遍，首次渲染要多花数秒。
+_LEXER_ALIASES = frozenset(alias for _name, aliases, _files, _mimes in get_all_lexers(plugins=False)
+                           for alias in aliases)
 
 # 语言名 -> 头部显示名（更友好/更像 Claude）
 _LANG_LABELS = {
@@ -168,13 +178,7 @@ def _parse_info(info):
 
 def _build_code_html(lang, filepath, code):
     code = code.rstrip('\n')
-    try:
-        lexer = get_lexer_by_name(lang, stripnl=False) if lang else TextLexer()
-    except ClassNotFound:
-        try:
-            lexer = guess_lexer(code)
-        except ClassNotFound:
-            lexer = TextLexer()
+    lexer = get_lexer_by_name(lang, stripnl=False) if lang.lower() in _LEXER_ALIASES else TextLexer()
     body = _pyg_highlight(code, lexer, _CODE_FORMATTER)
     label = html_module.escape(_label_for(lang))
     esc_lang = html_module.escape(lang)
@@ -268,7 +272,8 @@ def restore_code_blocks(html_text, placeholders):
 # 图片本地化步骤改写路径。这里只是"占位挡一挡"，真正生成 <code> 仍交回给
 # python-markdown（所以还原要发生在 md.convert 之前，而不是像代码块那样在之后）。
 # ---------------------------------------------------------------------------
-_INLINE_CODE_RE = re.compile(r'(?<!`)(`+)(?!`)([^`]+?)\1(?!`)')
+# 以字面量反引号开头，正则引擎才能走前缀快速搜索；开头用后行断言会在大段 base64 上逐字符尝试。
+_INLINE_CODE_RE = re.compile(r'`(?<!``)(`*)(?!`)([^`]+?)`\1(?!`)')
 
 
 def protect_inline_code(md_text):

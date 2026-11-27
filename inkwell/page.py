@@ -6,10 +6,13 @@ Inkwell - 页面组装
 以规避 WebView2 NavigateToString ~2MB 上限并让 KaTeX 字体相对路径可解析。
 """
 
+import functools
 import html as html_module
 import json
 import secrets
 import sys
+
+from .server import ASSET_ROOT
 
 
 # 无边框标题栏 + 侧栏 + 正文 + 搜索覆盖层 的整体骨架
@@ -120,6 +123,15 @@ def script_safe_json(value) -> str:
             .replace("\u2029", r"\u2029"))
 
 
+@functools.lru_cache(maxsize=None)
+def _module_preload_links() -> str:
+    """前端模块逐层 import 会形成请求瀑布；在 head 里一次性预加载，缩短桥注入前的等待。"""
+    js_root = ASSET_ROOT / "js"
+    return "\n".join(
+        f'<link rel="modulepreload" href="/assets/js/{path.relative_to(js_root).as_posix()}">'
+        for path in sorted(js_root.rglob("*.js")))
+
+
 def build_page(content_html: str, toc_html: str, title: str, path: str = None,
                preferences=None) -> str:
     """生成完整 HTML 文档字符串。"""
@@ -170,6 +182,7 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
 <link rel="stylesheet" href="/assets/css/article.css">
 <link rel="stylesheet" href="/assets/css/viewer.css">
 <link rel="stylesheet" href="/assets/css/editor.css">
+{_module_preload_links()}
 </head>
 <body>
 {shell}
