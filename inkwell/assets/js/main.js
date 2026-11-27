@@ -9,7 +9,7 @@ import {
   initContent, onContentActionClick, clearVarHighlights, runSearch, nextHit,
   openSearch, closeSearch, bindReaderEvents, highlightToken, renderMath,
 } from "./reader.js";
-import { onCopy, sanitizeForCopy, buildCopyPayload } from "./copy.js";
+import { onCopy, onCut, sanitizeForCopy, buildCopyPayload } from "./copy.js";
 import {
   onContentImageClick, imageViewerIsOpen, closeImageViewer, openImageViewer,
   fitImageViewer, zoomImageViewer, openSvgViewer, imageToPngBlob, clearSelectedImage,
@@ -21,7 +21,10 @@ import {
 } from "./nav.js";
 import { findImageAt, findProtectedRanges, splitMarkdownBlocks, joinMarkdownBlocks } from "./edit/blocks.js";
 import { deactivateBlock, activateBlock, refreshLiveRender, getEditText, setEditText } from "./edit/live.js";
-import { enterEditMode, exitEditMode, toggleEditMode, saveEdit, bindEditorUI } from "./edit/editor.js";
+import {
+  enterEditMode, exitEditMode, toggleEditMode, saveEdit, bindEditorUI,
+  deleteSelectedImageOnKey, preventFileNavigation, onFileDrop,
+} from "./edit/editor.js";
 
 function bindContentAreaEvents() {
   // 正文（#content）与 Live Preview 编辑区（#editorLive）都承载相同的可交互内容；
@@ -34,6 +37,9 @@ function bindContentAreaEvents() {
     if (!(e.target.closest && e.target.closest("img"))) clearSelectedImage();
   });
   document.addEventListener("copy", onCopy, true);
+  document.addEventListener("cut", onCut, true);
+  document.addEventListener("dragover", preventFileNavigation);
+  document.addEventListener("drop", onFileDrop);
 }
 
 function handleEditModeShortcut(e, ctrl) {
@@ -48,6 +54,10 @@ function handleEditModeShortcut(e, ctrl) {
     // Obsidian 风格：先退出当前块编辑，再退出编辑模式
     if (state.activeBlockIdx >= 0) deactivateBlock();
     else exitEditMode();
+    return true;
+  }
+  if ((e.key === "Delete" || e.key === "Backspace") && !ctrl && deleteSelectedImageOnKey()) {
+    e.preventDefault();
     return true;
   }
   // 编辑态屏蔽阅读向快捷键（搜索 / 目录切换仍允许）

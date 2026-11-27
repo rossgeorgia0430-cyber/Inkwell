@@ -74,12 +74,15 @@ export function copyImage(img, btn) {
 }
 
 export function clearSelectedImage() {
+  if (state.selectedImage) state.selectedImage.classList.remove("is-selected");
   state.selectedImage = null;
 }
 
 export function selectImage(img) {
   if (!img || !inRenderableRoot(img)) return;
+  if (state.selectedImage !== img) clearSelectedImage();
   state.selectedImage = img;
+  img.classList.add("is-selected");
 }
 
 function createImageCopyButton() {
@@ -419,5 +422,6 @@ export function onContentImageClick(e) {
   if (!img || !inRenderableRoot(img)) return;
   e.preventDefault();
   e.stopImmediatePropagation();
-  openImageViewer(img);
+  // 编辑区里单击只选中图片，双击才放大（见 editor.js 的 dblclick 绑定）
+  if (!(state.editorLive && state.editorLive.contains(img))) openImageViewer(img);
 }

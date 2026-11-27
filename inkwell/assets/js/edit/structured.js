@@ -2,6 +2,7 @@ import { api, holdHeightWhileImagesLoad } from "../util.js";
 import { state } from "../state.js";
 import { initRenderedFragment } from "../reader.js";
 import { withReferenceDefinitions } from "./blocks.js";
+import { collapseForEdit, restoreFromEdit } from "./live.js";
 
 // 围栏行和信息字符串属于文档格式，修改代码正文时应保留。
 function fenceParts(source) {
@@ -100,14 +101,14 @@ function fillPanel(panel, view, preview, spec, onChange) {
   const input = document.createElement("textarea");
   input.className = "lp-parameter";
   input.setAttribute("aria-label", spec.label);
-  input.rows = Math.min(12, Math.max(2, spec.value.split("\n").length));
-  input.value = spec.value;
+  input.value = collapseForEdit(spec.value);
+  input.rows = Math.min(12, Math.max(2, input.value.split("\n").length));
   const status = document.createElement("span");
   status.setAttribute("role", "status");
   panel.append(input, status);
   let revision = 0, timer;
   input.addEventListener("input", () => {
-    const text = spec.write(input.value);
+    const text = spec.write(restoreFromEdit(input.value));
     onChange(text);
     const pending = ++revision;
     clearTimeout(timer);

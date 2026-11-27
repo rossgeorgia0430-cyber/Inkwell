@@ -39,56 +39,131 @@ function inProtectedRange(ranges, pos) {
   return null;
 }
 
-export function findImageAt(text, pos) {
+// 从 "(" 之后扫到与它配对的 ")"，返回 ")" 的下一位；没有配对返回 -1。
+// 逐字符线性扫描：内嵌图片的地址动辄几 MB，用正则回溯会在 WebKit 里超限静默失败、在 V8 里抛 RangeError。
+export function scanLinkDestination(text, from) {
+  var depth = 1;
+  var inAngle = false;
+  var quote = null;
+  for (var p = from; p < text.length; p++) {
+    var c = text.charAt(p);
+    if (c === "\\") { p++; continue; }
+    if (quote) {
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (inAngle) {
+      if (c === ">") inAngle = false;
+      continue;
+    }
+    if (c === "<") inAngle = true;
+    // 标题和地址之间必须有空白，地址里的撇号不是引号
+    else if ((c === '"' || c === "'") && p > from && /\s/.test(text.charAt(p - 1))) quote = c;
+    else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return p + 1;
+    else if (c === "\n" && depth === 1) return -1;
+  }
+  return -1;
+}
+
+// 文本里所有行内图片 ![alt](地址)，按出现顺序；围栏和行内代码里的不算。
+export function findImages(text) {
   var ranges = findProtectedRanges(text);
   var re = /!\[([^\]]*)\]\(/g;
+  var hits = [];
   var m;
   while ((m = re.exec(text)) !== null) {
-    var start = m.index;
-    var destStart = re.lastIndex;
-    if (inProtectedRange(ranges, start)) continue;
-    var depth = 1;
-    var p = destStart;
-    var inAngle = false;
-    var quote = null;
-    while (p < text.length && depth > 0) {
-      var c = text.charAt(p);
-      if (quote) {
-        if (c === quote) quote = null;
-        p++;
-        continue;
-      }
-      if (inAngle) {
-        if (c === ">") inAngle = false;
-        p++;
-        continue;
-      }
-      if (c === "<") { inAngle = true; p++; continue; }
-      if (c === '"' || c === "'") { quote = c; p++; continue; }
-      if (c === "(") { depth++; p++; continue; }
-      if (c === ")") {
-        depth--;
-        p++;
-        if (depth === 0) break;
-        continue;
-      }
-      if (c === "\n" && depth === 1 && !quote && !inAngle) break;
-      p++;
-    }
-    if (depth !== 0) continue;
-    var end = p;
-    if (pos >= start && pos <= end) {
-      return {
-        start: start,
-        end: end,
-        alt: m[1],
-        dest: text.slice(destStart, end - 1),
-        markdown: text.slice(start, end)
-      };
-    }
+    if (inProtectedRange(ranges, m.index)) continue;
+    var end = scanLinkDestination(text, re.lastIndex);
+    if (end < 0) continue;
+    hits.push({
+      start: m.index,
+      end: end,
+      alt: m[1],
+      dest: text.slice(re.lastIndex, end - 1),
+      markdown: text.slice(m.index, end)
+    });
     re.lastIndex = end;
   }
-  return null;
+  return hits;
+}
+
+export function findImageAt(text, pos) {
+  return findImages(text).find(function (hit) { return pos >= hit.start && pos <= hit.end; }) || null;
+}
+
+// 删掉一处图片：图片独占一行时连同该行删掉，并避免留下多余的空行。返回新文本和删除处的位置。
+export function textWithoutImage(text, hit) {
+  var lineStart = text.lastIndexOf("\n", hit.start - 1) + 1;
+  var lineEnd = text.indexOf("\n", hit.end);
+  if (lineEnd < 0) lineEnd = text.length;
+  var onlyImage = text.slice(lineStart, lineEnd).trim() === hit.markdown;
+  var delStart = onlyImage ? lineStart : hit.start;
+  var delEnd = onlyImage ? (lineEnd < text.length ? lineEnd + 1 : lineEnd) : hit.end;
+  if (onlyImage && delStart >= 2 && text.slice(delStart - 2, delStart) === "\n\n") delStart -= 1;
+  return { text: text.slice(0, delStart) + text.slice(delEnd), caret: delStart };
+}
+
+// —— 源码框里折叠内嵌图片数据：textarea 塞几 MB 的 base64 会卡很久，也没法读 ——
+// table 是编辑会话级的：记号在整个会话里唯一，带记号的文本剪切粘贴到别的块也能还原。
+const EMBED_MIN_CHARS = 256;
+const EMBED_MARKER_HEAD = "…[内嵌数据 #";
+// 折叠产生的记号一定紧跟在 ;base64, 之后；别处出现的同样文字是正文，不还原。
+const EMBED_MARKER = /(;base64,)…\[内嵌数据 #(\d+) · [^\]\n]*\]/g;
+const DATA_URI_HEAD = /^data:[\w.+-]+\/[\w.+-]+(?:;[\w.=+-]+)*$/;
+
+export function createEmbedTable() {
+  return { byId: new Map(), idOf: new Map() };
+}
+
+function isBase64Char(code) {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57)
+    || code === 43 || code === 47 || code === 61;
+}
+
+function formatDataSize(chars) {
+  var bytes = Math.floor(chars * 3 / 4);
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1048576) return Math.round(bytes / 1024) + " KB";
+  return (bytes / 1048576).toFixed(1) + " MB";
+}
+
+function embedMarker(data, table) {
+  var id = table.idOf.get(data);
+  if (id === undefined) {
+    id = table.byId.size + 1;
+    table.byId.set(id, data);
+    table.idOf.set(data, id);
+  }
+  return EMBED_MARKER_HEAD + id + " · " + formatDataSize(data.length) + "]";
+}
+
+export function collapseEmbeddedData(text, table) {
+  var out = "";
+  var copied = 0;
+  var searchFrom = 0;
+  var at;
+  while ((at = text.indexOf(";base64,", searchFrom)) !== -1) {
+    var dataStart = at + 8;
+    var dataEnd = dataStart;
+    while (dataEnd < text.length && isBase64Char(text.charCodeAt(dataEnd))) dataEnd++;
+    searchFrom = dataEnd;
+    var head = text.lastIndexOf("data:", at);
+    if (dataEnd - dataStart < EMBED_MIN_CHARS || head < 0 || at - head > 100
+        || !DATA_URI_HEAD.test(text.slice(head, at))) continue;
+    out += text.slice(copied, dataStart) + embedMarker(text.slice(dataStart, dataEnd), table);
+    copied = dataEnd;
+  }
+  return copied ? out + text.slice(copied) : text;
+}
+
+// 记号被删掉或改坏就不再还原，对应的数据随之丢弃。
+export function restoreEmbeddedData(text, table) {
+  if (text.indexOf(EMBED_MARKER_HEAD) === -1) return text;
+  return text.replace(EMBED_MARKER, function (marker, head, id) {
+    var data = table.byId.get(Number(id));
+    return data === undefined ? marker : head + data;
+  });
 }
 
 // —— 块切分：空行分隔，围栏 / $$ 公式视为原子块 ——

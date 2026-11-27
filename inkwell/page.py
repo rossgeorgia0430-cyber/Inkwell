@@ -78,7 +78,7 @@ _SHELL = """
               <button type="button" class="edit-tool-btn" id="editRefreshBtn" title="刷新渲染" data-shortcut="mod+Shift+P">刷新</button>
               <button type="button" class="edit-tool-btn" id="editInsertImageBtn" title="插入图片文件">插图</button>
               <button type="button" class="edit-tool-btn" id="editEmbedImageBtn" title="内嵌图片 (data URI)">内嵌图</button>
-              <button type="button" class="edit-tool-btn" id="editDeleteImageBtn" title="删除光标处图片">删图</button>
+              <button type="button" class="edit-tool-btn" id="editDeleteImageBtn" title="删除光标处或选中的图片">删图</button>
               <button type="button" class="edit-tool-btn" id="editInsertCodeBtn" title="插入代码块">代码</button>
               <button type="button" class="edit-tool-btn" id="editInsertMermaidBtn" title="插入流程图">流程图</button>
               <button type="button" class="edit-tool-btn" id="editInsertMathBtn" title="插入公式">公式</button>

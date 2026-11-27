@@ -1,10 +1,49 @@
 import { renderMath } from "../reader.js";
 import { prepareStructured } from "./structured.js";
+import { scanLinkDestination } from "./blocks.js";
 
 // 只有渲染内容能与原文逐段对应时才开放直接编辑，保留其余 Markdown 语法。
 const delimiters = { STRONG: "**", B: "**", EM: "*", I: "*", CODE: "`" };
 
 const originalRuns = new WeakMap();
+
+// 图片和行内公式的原始 Markdown 按序号存在这里，序号写在节点的 data-lp-atom 上。
+// 浏览器合并段落时会重建节点，以节点为键的映射随之丢失，data-* 属性却会保留下来。
+const atomRuns = new WeakMap();
+
+function registerAtom(node, markdown) {
+  const view = node.closest(".lp-view");
+  let runs = atomRuns.get(view);
+  if (!runs) atomRuns.set(view, runs = []);
+  node.dataset.lpAtom = String(runs.push(markdown) - 1);
+}
+
+function atomMarkdown(node) {
+  const view = node.closest(".lp-view");
+  const index = node.dataset.lpAtom;
+  return view && index !== undefined ? atomRuns.get(view)?.[Number(index)] : undefined;
+}
+
+function setAtomMarkdown(node, markdown) {
+  atomRuns.get(node.closest(".lp-view"))[Number(node.dataset.lpAtom)] = markdown;
+}
+
+// 链接和图片 ] 之后的 (地址) 或 [引用]，返回结尾位置；没有返回 -1。
+const referenceLabel = /\[[^\]\n]*\]/y;
+function matchLinkTail(source, at) {
+  if (source[at] === "(") return scanLinkDestination(source, at + 1);
+  referenceLabel.lastIndex = at;
+  return referenceLabel.test(source) ? referenceLabel.lastIndex : -1;
+}
+
+const imageHead = /!\[([^\]\n]*)\]/y;
+function matchImage(source, offset) {
+  imageHead.lastIndex = offset;
+  const head = imageHead.exec(source);
+  if (!head) return null;
+  const end = matchLinkTail(source, imageHead.lastIndex);
+  return end < 0 ? null : { alt: head[1], end };
+}
 
 const entities = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&nbsp;": "\u00a0" };
 const lineBreakTag = /<br[ \t]*\/?>/iy;
@@ -24,7 +63,7 @@ function bindInlineFormula(node, raw) {
   node.contentEditable = "false";
   node.tabIndex = 0;
   node.title = "编辑行内公式";
-  originalRuns.set(node, { markdown: raw });
+  registerAtom(node, raw);
   function open() {
     const host = node.closest('[contenteditable="true"]');
     if (!host) return;
@@ -43,7 +82,7 @@ function bindInlineFormula(node, raw) {
     input.addEventListener("input", () => {
       const value = input.value;
       const dollars = raw.startsWith("$") && value && !/[$\n]/.test(value) && value.trim() === value;
-      originalRuns.set(node, { markdown: dollars ? "$" + value + "$" : "\\(" + value + "\\)" });
+      setAtomMarkdown(node, dollars ? "$" + value + "$" : "\\(" + value + "\\)");
       node.dataset.latex = value;
       host.dispatchEvent(new Event("input", { bubbles: true }));
       clearTimeout(timer);
@@ -93,14 +132,14 @@ function matchInline(parent, source, offset) {
       continue;
     }
     if (name === "IMG" && source.startsWith("![", offset)) {
-      const image = /^!\[([^\]\n]*)\](?:\((?:\\.|[^()\\]|\((?:\\.|[^()\\])*\))*\)|\[[^\]\n]*\])/.exec(source.slice(offset));
-      if (!image || image[1] !== node.alt) return -1;
+      const image = matchImage(source, offset);
+      if (!image || image.alt !== node.alt) return -1;
       const atom = document.createElement("span");
       atom.contentEditable = "false";
       node.replaceWith(atom);
       atom.append(node);
-      originalRuns.set(atom, { markdown: image[0] });
-      offset += image[0].length;
+      registerAtom(atom, source.slice(offset, image.end));
+      offset = image.end;
       continue;
     }
     let mark = delimiters[name];
@@ -134,10 +173,9 @@ function matchInline(parent, source, offset) {
     if (offset < 0) return -1;
     let close = mark;
     if (name === "A") {
-      const suffix = source.slice(offset);
-      const link = /^\](?:\((?:\\.|[^()\\]|\((?:\\.|[^()\\])*\))*\)|\[[^\]\n]*\])/.exec(suffix);
-      if (!suffix.startsWith("]")) return -1;
-      close = link?.[0] || "]";
+      if (source[offset] !== "]") return -1;
+      const tailEnd = matchLinkTail(source, offset + 1);
+      close = tailEnd < 0 ? "]" : source.slice(offset, tailEnd);
     }
     if (!source.startsWith(close, offset)) return -1;
     offset += close.length;
@@ -167,12 +205,21 @@ function inlineMarkdown(parent, paragraphBreak) {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) continue;
     const name = node.tagName;
+    if (name === "BUTTON") continue; // 界面控件，不是正文
+    const atom = atomMarkdown(node);
+    if (atom !== undefined) {
+      result += atom;
+      continue;
+    }
+    // 图片和公式找不到原文就不能猜：返回 null，由调用方放弃这次回写。
+    if (name === "IMG" || node.matches(".math-inline")) return null;
     const original = originalRuns.get(node);
     if (original?.markdown !== undefined) {
       result += original.markdown;
       continue;
     }
     const inner = inlineMarkdown(node, paragraphBreak);
+    if (inner === null) return null;
     if (name === "CODE") {
       let ticks = original?.mark?.length || 1;
       for (const match of inner.matchAll(/`+/g)) ticks = Math.max(ticks, match[0].length + 1);
@@ -343,7 +390,8 @@ function mapFields(view, source) {
   return /^(?:[\s#|:=\-]*|\s*\{[^{}\n]*\}\s*)$/.test(source.slice(offset)) ? mapped : [];
 }
 
-export function prepareVisualBlock(view, source, onChange) {
+// onRevert：字段内容无法可靠地写回 Markdown 时调用，由调用方把这一块恢复成上一次已知的源码。
+export function prepareVisualBlock(view, source, onChange, onRevert) {
   const html = htmlFields(view, source);
   const fields = html.length ? html : mapFields(view, source);
   for (const entry of fields) {
@@ -360,6 +408,10 @@ export function prepareVisualBlock(view, source, onChange) {
       if (event.inputType.startsWith("format") || event.inputType.includes("List")) event.preventDefault();
     });
     field.addEventListener("input", () => {
+      // 浏览器重建图片、公式节点后可能丢掉不可编辑标记
+      for (const atom of field.querySelectorAll("[data-lp-atom]")) {
+        if (atom.getAttribute("contenteditable") !== "false") atom.contentEditable = "false";
+      }
       let paragraphBreak = "\n\n";
       if (field.matches("td,th")) paragraphBreak = "<br>";
       else if (field.matches("li,.lp-list-label,li > p")) {
@@ -367,6 +419,10 @@ export function prepareVisualBlock(view, source, onChange) {
         paragraphBreak = (field.tagName === "P" ? "\n\n" : "\n") + source.slice(lineStart, entry.from);
       } else if (field.closest("blockquote")) paragraphBreak = "\n> ";
       const markdown = entry.serialize ? entry.serialize() : inlineMarkdown(field, paragraphBreak);
+      if (markdown === null) {
+        onRevert();
+        return;
+      }
       entry.value = field.innerHTML === "<br>" ? "" : markdown;
       let end = 0;
       const parts = [];

@@ -6,6 +6,7 @@
   line-height: 0; vertical-align: top; border-radius: var(--radius-sm);
 }
 .image-block > a, .image-block > picture { display: block; line-height: 0; }
+img.is-selected { outline: 2px solid var(--accent); outline-offset: 2px; }
 .image-copy-btn {
   position: absolute; top: 8px; right: 8px; z-index: 4;
   display: inline-flex; align-items: center; gap: 5px;

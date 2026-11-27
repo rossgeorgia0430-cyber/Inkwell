@@ -1,11 +1,12 @@
 // 正文直接编辑与段落源码编辑共用同一份 Markdown 缓冲。
 // Markdown 全文（state.editorText）为真相，state.lpBlocks 是它的分块缓存。
 import { state } from "../state.js";
-import { $, api, toast, formatModShortcut, holdHeightWhileImagesLoad } from "../util.js";
+import { $, api, toast, formatModShortcut, holdHeightWhileImagesLoad, imagesSettled } from "../util.js";
 import { initRenderedFragment } from "../reader.js";
 import {
   classifyBlockKind, splitMarkdownBlocks, joinMarkdownBlocks,
   bufferWithMarkers, splitPreviewHtml, withReferenceDefinitions, isHeadingBlock,
+  collapseEmbeddedData, restoreEmbeddedData,
 } from "./blocks.js";
 // editor.js 反过来也从本模块导入（进入/退出/保存都要驱动块级 DOM）——这是一个
 // 有意为之的模块间循环引用：两边都只在事件回调里调用对方，不在模块顶层求值时
@@ -86,12 +87,27 @@ export function getActiveTextarea() {
   );
 }
 
+// 源码框显示折叠了内嵌图片数据的文本；写进缓冲前必须经 readSource 还原，选区偏移则相对折叠后的文本。
+export function collapseForEdit(text) {
+  return collapseEmbeddedData(text, state.editEmbeds);
+}
+
+export function restoreFromEdit(text) {
+  return restoreEmbeddedData(text, state.editEmbeds);
+}
+
+export function readSource(ta) {
+  return restoreFromEdit(ta.value);
+}
+
 export function flushActiveBlock() {
   var ta = getActiveTextarea();
   if (!ta) return;
   var idx = state.activeBlockIdx;
-  if (idx < 0 || !state.lpBlocks[idx] || state.lpBlocks[idx].text === ta.value) return;
-  state.lpBlocks[idx].text = ta.value;
+  if (idx < 0 || !state.lpBlocks[idx]) return;
+  var text = readSource(ta);
+  if (state.lpBlocks[idx].text === text) return;
+  state.lpBlocks[idx].text = text;
   syncBufferFromBlocks();
 }
 
@@ -173,7 +189,7 @@ export function teardownActiveTextarea(opts) {
       var ta = tas[i];
       var idx = resolveBlockIdxFromEl(ta);
       if (idx >= 0 && state.lpBlocks[idx]) {
-        state.lpBlocks[idx].text = ta.value;
+        state.lpBlocks[idx].text = readSource(ta);
       }
     }
     if (tas.length) syncBufferFromBlocks();
@@ -267,18 +283,29 @@ function buildBlockViewEl(idx) {
   } else if (!raw.trim()) {
     view.innerHTML = "<p class='lp-empty-hint'>点击此处开始写作…</p>";
   } else {
-    view.textContent = raw;
+    view.textContent = collapseForEdit(raw);
     if (!fresh) {
       appendBlockTools(view, null, true);
       return view;
     }
   }
-  prepareVisualBlock(view, state.lpBlocks[idx].text, text => {
-    if (!view.isConnected) return;
-    state.lpBlocks[idx].text = text;
-    invalidateLiveRender();
-    syncBufferFromBlocks();
-  });
+  // 一块的映射出错不能让整页编辑区空白：这一块退成只能走「源码」，其余块照常挂载。
+  try {
+    prepareVisualBlock(view, state.lpBlocks[idx].text, text => {
+      if (!view.isConnected) return;
+      state.lpBlocks[idx].text = text;
+      invalidateLiveRender();
+      syncBufferFromBlocks();
+    }, () => {
+      if (!view.isConnected) return;
+      setEditStatus("这段内容无法安全写回，已恢复为上一次的内容", "warn");
+      refreshSingleBlockView(idx);
+    });
+  } catch (error) {
+    console.error("块 " + (idx + 1) + " 无法开放直接编辑，已退回源码编辑", error);
+    view.textContent = collapseForEdit(raw);
+    appendBlockTools(view, null, true);
+  }
   return view;
 }
 
@@ -321,7 +348,7 @@ function createBlockTextarea(idx, value) {
   ta.className = "lp-source";
   ta.spellcheck = false;
   ta.setAttribute("aria-label", "编辑块 " + (idx + 1));
-  ta.value = value || "";
+  ta.value = collapseForEdit(value || "");
   bindActiveTextarea(ta);
   return ta;
 }
@@ -411,7 +438,7 @@ function bindActiveTextarea(ta) {
     ta._lpComposing = false;
     var idx = resolveBlockIdxFromEl(ta);
     if (idx >= 0 && state.lpBlocks[idx]) {
-      state.lpBlocks[idx].text = ta.value;
+      state.lpBlocks[idx].text = readSource(ta);
       syncBufferFromBlocks();
     }
     autosizeTextarea(ta);
@@ -425,7 +452,7 @@ function bindActiveTextarea(ta) {
     if (ta._lpComposing || ta.isComposing) return;
     var idx = resolveBlockIdxFromEl(ta);
     if (idx < 0 || !state.lpBlocks[idx]) return;
-    state.lpBlocks[idx].text = ta.value;
+    state.lpBlocks[idx].text = readSource(ta);
     syncBufferFromBlocks();
     // sticky kind：编辑过程中不降级（避免表格 thrash）
     var bel = getBlockEl(idx);
@@ -478,7 +505,7 @@ function onActiveTextareaKeydown(e) {
       ta.selectionStart = ta.selectionEnd = s + 2;
     }
     var tidx = resolveBlockIdxFromEl(ta);
-    if (tidx >= 0) state.lpBlocks[tidx].text = ta.value;
+    if (tidx >= 0) state.lpBlocks[tidx].text = readSource(ta);
     syncBufferFromBlocks();
     autosizeTextarea(ta);
     return;
@@ -500,7 +527,7 @@ function captureMountRestoreState(opts) {
   if (restoreIdx >= 0) {
     var oldTa = getActiveTextarea();
     if (oldTa) {
-      restoreVal = oldTa.value;
+      restoreVal = readSource(oldTa);
       selStart = oldTa.selectionStart;
       selEnd = oldTa.selectionEnd;
     } else if (state.lpBlocks[restoreIdx]) {
@@ -649,7 +676,7 @@ function showPreviewFailure(idx) {
   setEditStatus("预览失败，已显示原文", "warn");
 }
 
-function refreshSingleBlockView(idx) {
+export function refreshSingleBlockView(idx) {
   if (idx < 0 || idx >= state.lpBlocks.length) return;
   var a = api();
   if (!a || !a.preview_markdown) return;
@@ -730,6 +757,7 @@ function captureWantActiveSelection(wantActive) {
   if (wantActive < 0) return null;
   var ta = getActiveTextarea();
   if (ta && wantActive === state.activeBlockIdx) {
+    // 选区偏移相对折叠后的文本，恢复时也用折叠后的值比较
     return { start: ta.selectionStart, end: ta.selectionEnd, text: ta.value };
   }
   return null;
@@ -759,6 +787,17 @@ function applyRenderFailure(p, afterIdx) {
   }
 }
 
+// 新插入的块不一定在可视区内（光标不在源码框里时插在选区所在块之后），渲染完把它滚进来。
+// 它上方的图片还没加载完时高度未定，加载完再对一次，否则块会被撑到可视区之外。
+function revealBlock(idx) {
+  var el = idx == null ? null : getBlockEl(idx);
+  if (!el) return;
+  el.scrollIntoView({ block: "nearest" });
+  imagesSettled(state.editorLive).then(function () {
+    if (state.editMode && el.isConnected) el.scrollIntoView({ block: "nearest" });
+  });
+}
+
 function applyRenderSuccess(p, ctx) {
   // 块标记是 HTML 注释，不影响标题结构，这次带标记渲染的 toc 与不带标记的完全
   // 一致，直接用它，不必再整篇多请求一次 preview_markdown。
@@ -773,6 +812,7 @@ function applyRenderSuccess(p, ctx) {
     if (ctx.preAnchor) restoreLiveScrollAnchor(ctx.preAnchor);
     requestAnimationFrame(function () {
       if (ctx.preAnchor) restoreLiveScrollAnchor(ctx.preAnchor);
+      revealBlock(ctx.revealIdx);
     });
   }
   if (state.toc && p && p.toc != null) state.toc.innerHTML = p.toc || "";
@@ -804,6 +844,7 @@ export function runLiveRender(opts) {
   var seq = ++state.editPreviewSeq;
   var ctx = {
     afterIdx: wantActive, preAnchor: preAnchor, savedSel: savedSel, fromButton: opts.fromButton,
+    revealIdx: opts.revealBlock,
     texts: state.lpBlocks.map(function (block) { return block.text; }),
   };
   a.preview_markdown(marked, state.editPath || state.currentPath).then(function (p) {
