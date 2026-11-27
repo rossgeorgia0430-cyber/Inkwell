@@ -1,6 +1,7 @@
 import { api, holdHeightWhileImagesLoad } from "../util.js";
 import { state } from "../state.js";
 import { initRenderedFragment } from "../reader.js";
+import { withReferenceDefinitions } from "./blocks.js";
 
 // 围栏行和信息字符串属于文档格式，修改代码正文时应保留。
 function fenceParts(source) {
@@ -113,7 +114,8 @@ function fillPanel(panel, view, preview, spec, onChange) {
     timer = setTimeout(async () => {
       if (!view.isConnected) return;
       try {
-        const result = await api().preview_markdown(text, state.editPath);
+        const index = Number(view.closest(".lp-block").dataset.idx);
+        const result = await api().preview_markdown(withReferenceDefinitions(text, state.lpBlocks, index), state.editPath);
         if (!view.isConnected || revision !== pending) return;
         if (!result.ok) throw new Error(result.error);
         replacePreview(preview, result.content);

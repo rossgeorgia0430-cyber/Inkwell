@@ -174,6 +174,9 @@ export function classifyBlockKind(raw) {
   // ATX 标题
   var hm = /^(#{1,6})\s+\S/.exec(t);
   if (hm) return "heading:" + hm[1].length;
+  // Setext 标题：首行文字，下一行只有 = 或 -。源码框保持正文样式，所以不与 ATX 标题共用 heading 类别。
+  var sm = /^[^\n]+\n(=+|-+)[ \t]*(?:\n|$)/.exec(t);
+  if (sm) return "setext:" + (sm[1][0] === "=" ? 1 : 2);
   // GFM 表格：至少表头 + 分隔行，且多行含 |
   var lines = t.split("\n").filter(function (l) { return l.replace(/^\s+|\s+$/g, "").length; });
   if (lines.length >= 2) {
@@ -190,6 +193,22 @@ export function classifyBlockKind(raw) {
   // 列表
   if (/^([-*+]|\d+\.)\s+/.test(t)) return "list";
   return "text";
+}
+
+export function isHeadingBlock(text) {
+  return /^(?:heading|setext):/.test(classifyBlockKind(text));
+}
+
+const THEMATIC_BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+
+// 后端（sane_lists）只在无序与有序之间分列表；同一种列表里不同的无序符号仍是同一个列表。
+function listKindAt(text, pos) {
+  const end = text.indexOf("\n", pos);
+  const line = text.slice(pos, end === -1 ? text.length : end);
+  if (THEMATIC_BREAK.test(line)) return null;
+  if (/^ {0,3}[-*+][ \t]/.test(line)) return "bullet";
+  if (/^ {0,3}\d+\.[ \t]/.test(line)) return "ordered";
+  return null;
 }
 
 function htmlBlockEnd(text, start) {
@@ -255,6 +274,7 @@ export function splitMarkdownBlocks(text) {
     const container = /(?: {0,3}(?:[-*+]|\d+\.)[ \t]| {4}|\t)/y;
     container.lastIndex = start;
     const canContinue = container.test(text);
+    const listKind = listKindAt(text, start);
     let j = text.indexOf("\n", start);
     while (j !== -1) {
       const k = j + 1;
@@ -262,7 +282,9 @@ export function splitMarkdownBlocks(text) {
       if (text[k] === "\n") {
         let next = k;
         while (text[next] === "\n") next++;
-        if (!canContinue || !(text.startsWith("    ", next) || text[next] === "\t")) break;
+        const indented = canContinue && (text.startsWith("    ", next) || text[next] === "\t");
+        // 空行隔开的同类列表项在渲染里仍是同一个（宽松）列表，不能拆成两块。
+        if (!indented && !(listKind && listKindAt(text, next) === listKind)) break;
         j = text.indexOf("\n", next);
         continue;
       }
@@ -290,6 +312,42 @@ export function joinMarkdownBlocks(blocks) {
       ? raw : block.text.replace(/\n/g, (raw.match(/\r\n|\r|\n/) || [newline])[0]);
     return before + body + (block.after || "");
   }).join("");
+}
+
+function isCodeOrMathBlock(text) {
+  return /^\s*(?:`{3,}|~{3,}|\$\$|\\\[)/.test(text);
+}
+
+function normalizeReferenceLabel(label) {
+  return label.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+// 单块单独渲染时，引用式链接/图片的定义在别的块里。把本块用到的那几条定义行追加到末尾
+// （定义本身不渲染出可见内容）；定义可能带体积很大的 data URI，所以只取用到的。
+export function withReferenceDefinitions(text, blocks, ownIndex) {
+  if (isCodeOrMathBlock(text)) return text;
+  const wanted = new Set();
+  for (const match of text.matchAll(/\[([^\[\]\n]+)\]/g)) wanted.add(normalizeReferenceLabel(match[1]));
+  if (!wanted.size) return text;
+  const found = new Map();
+  const definition = /^ {0,3}\[([^\[\]\n]+)\]:[ \t]*(?=\S)/gm;
+  blocks.forEach(function (block, index) {
+    const body = block.text || "";
+    if (index === ownIndex || body.indexOf("]:") === -1 || isCodeOrMathBlock(body)) return;
+    definition.lastIndex = 0;
+    let match;
+    while ((match = definition.exec(body))) {
+      const label = normalizeReferenceLabel(match[1]);
+      if (label[0] === "^" || !wanted.has(label) || found.has(label)) continue;
+      let end = body.indexOf("\n", definition.lastIndex);
+      if (end === -1) end = body.length;
+      // 标题可以单独写在下一行
+      const title = /^\n[ \t]+["'(][^\n]*/.exec(body.slice(end, end + 1000));
+      if (title) end += title[0].length;
+      found.set(label, body.slice(match.index, end));
+    }
+  });
+  return found.size ? text + "\n\n" + [...found.values()].join("\n") : text;
 }
 
 // 区分文档自带的注释与当前编辑会话的分隔标记。

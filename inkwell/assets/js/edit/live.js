@@ -5,7 +5,7 @@ import { $, api, toast, formatModShortcut, holdHeightWhileImagesLoad } from "../
 import { initRenderedFragment } from "../reader.js";
 import {
   classifyBlockKind, splitMarkdownBlocks, joinMarkdownBlocks,
-  bufferWithMarkers, splitPreviewHtml,
+  bufferWithMarkers, splitPreviewHtml, withReferenceDefinitions, isHeadingBlock,
 } from "./blocks.js";
 // editor.js 反过来也从本模块导入（进入/退出/保存都要驱动块级 DOM）——这是一个
 // 有意为之的模块间循环引用：两边都只在事件回调里调用对方，不在模块顶层求值时
@@ -656,7 +656,7 @@ function refreshSingleBlockView(idx) {
   var text = (state.lpBlocks[idx] && state.lpBlocks[idx].text) || "";
   const element = getBlockEl(idx);
   var expected = text;
-  a.preview_markdown(text || "\n", state.editPath || state.currentPath).then(function (p) {
+  a.preview_markdown(withReferenceDefinitions(text, state.lpBlocks, idx) || "\n", state.editPath || state.currentPath).then(function (p) {
     if (!state.editMode || element !== getBlockEl(idx)) return;
     if (!p || p.ok === false) {
       showPreviewFailure(idx);
@@ -684,6 +684,7 @@ export function deactivateBlock() {
   if (ta && (ta._lpComposing || ta.isComposing)) return;
   invalidateLiveRender();
   var idx = state.activeBlockIdx;
+  var wasHeading = isHeadingBlock(state.lpBlocks[idx]?.initialText);
   flushActiveBlock();
   var full = bufferText();
   var oldCount = state.lpBlocks.length;
@@ -695,9 +696,9 @@ export function deactivateBlock() {
     var anchor = captureLiveScrollAnchor();
     restoreBlockView(idx);
     restoreLiveScrollAnchor(anchor);
-    // 单块刷新拿不到整篇 TOC，这里单独请求一次完整预览只为更新目录。
+    // 单块刷新拿不到整篇 TOC；只有标题变动才值得整篇渲染一次来更新目录。
     var a = api();
-    if (a && a.preview_markdown) {
+    if (a && a.preview_markdown && (wasHeading || isHeadingBlock(state.lpBlocks[idx].text))) {
       a.preview_markdown(bufferText(), state.editPath || state.currentPath).then(function (p2) {
         if (!state.editMode) return;
         if (state.toc && p2 && p2.toc != null) state.toc.innerHTML = p2.toc || "";

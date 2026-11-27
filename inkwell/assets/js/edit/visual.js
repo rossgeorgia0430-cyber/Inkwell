@@ -6,7 +6,9 @@ const delimiters = { STRONG: "**", B: "**", EM: "*", I: "*", CODE: "`" };
 
 const originalRuns = new WeakMap();
 
-const entities = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
+const entities = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&nbsp;": "\u00a0" };
+const lineBreakTag = /<br[ \t]*\/?>/iy;
+const listMarkerPrefix = /^\s*(?:[-*+]|\d+\.)[ \t]+/;
 
 // 浮层相对 .lp-block 定位，贴在目标下方且不超出块的左右边界
 function placeBelow(floating, target) {
@@ -103,6 +105,15 @@ function matchInline(parent, source, offset) {
     }
     let mark = delimiters[name];
     if (name === "A") mark = "[";
+    if (name === "BR") {
+      lineBreakTag.lastIndex = offset;
+      const tag = lineBreakTag.exec(source);
+      if (tag) {
+        originalRuns.set(node, { markdown: tag[0] });
+        offset += tag[0].length;
+        continue;
+      }
+    }
     if (name === "BR" && source.startsWith("  \n", offset)) {
       originalRuns.set(node, { markdown: "  " });
       offset += 2;
@@ -175,7 +186,7 @@ function inlineMarkdown(parent, paragraphBreak) {
     }
     else if (delimiters[name]) result += delimiters[name] + inner + delimiters[name];
     else if (name === "A") result += "[" + inner + "](" + node.getAttribute("href") + ")";
-    else if (name === "BR" && node.nextSibling) result += "  \n";
+    else if (name === "BR" && node.nextSibling) result += paragraphBreak === "<br>" ? "<br>" : "  \n";
     else if (name === "BR") continue;
     else if (name === "DIV" || name === "P") result += (node.previousSibling ? paragraphBreak : "") + inner;
     else result += inner;
@@ -209,6 +220,79 @@ function htmlFields(view, source) {
   });
 }
 
+const isBlank = character => character === " " || character === "\t";
+
+// 反引号包起来的代码里的竖线不分列；没有闭合的反引号按普通字符处理。
+function skipCodeSpan(source, index, end) {
+  let open = index;
+  while (open < end && source[open] === "`") open++;
+  for (let j = open; j < end;) {
+    if (source[j] !== "`") { j++; continue; }
+    let close = j;
+    while (close < end && source[close] === "`") close++;
+    if (close - j === open - index) return close;
+    j = close;
+  }
+  return open;
+}
+
+// 一行表格原文按未转义的竖线切成单元格，返回各单元格在原文中的范围（不含竖线）。
+function splitTableRow(source, lineStart, lineEnd) {
+  let from = lineStart;
+  while (from < lineEnd && isBlank(source[from])) from++;
+  if (source[from] === "|") from++;
+  let end = lineEnd;
+  while (end > from && isBlank(source[end - 1])) end--;
+  if (end > from && source[end - 1] === "|" && source[end - 2] !== "\\") end--;
+  const segments = [];
+  let segmentFrom = from;
+  for (let i = from; i < end; i++) {
+    if (source[i] === "\\") i++;
+    else if (source[i] === "`") i = skipCodeSpan(source, i, end) - 1;
+    else if (source[i] === "|") {
+      segments.push({ from: segmentFrom, to: i });
+      segmentFrom = i + 1;
+    }
+  }
+  segments.push({ from: segmentFrom, to: end });
+  return segments;
+}
+
+// 单元格内容与原文逐字符对得上才开放编辑；对不上（含缺失的单元格）的整格保持原样、不可编辑。
+function mapTableCell(cell, source, segment) {
+  if (!segment) return null;
+  let from = segment.from, end = segment.to;
+  while (from < end && isBlank(source[from])) from++;
+  while (end > from && isBlank(source[end - 1])) end--;
+  const to = matchInline(cell, source, from);
+  return to === end ? { field: cell, from, to, value: source.slice(from, to) } : null;
+}
+
+// 表格按行对应原文：表头在第一行，第二行是分隔行，之后每行对应一个正文行。
+function mapTable(table, source, offset) {
+  const rows = [...table.rows];
+  const blanks = /\s*/y;
+  blanks.lastIndex = offset;
+  blanks.exec(source);
+  const lines = [];
+  for (let start = blanks.lastIndex; lines.length <= rows.length && start <= source.length;) {
+    const end = source.indexOf("\n", start);
+    lines.push({ start, end: end === -1 ? source.length : end });
+    start = lines[lines.length - 1].end + 1;
+  }
+  if (lines.length <= rows.length) return null;
+  const cells = [];
+  rows.forEach((row, index) => {
+    const line = lines[index ? index + 1 : 0];
+    const segments = splitTableRow(source, line.start, line.end);
+    [...row.cells].forEach((cell, column) => {
+      const entry = mapTableCell(cell, source, segments[column]);
+      if (entry) cells.push(entry);
+    });
+  });
+  return { cells, end: lines[rows.length].end };
+}
+
 function mapFields(view, source) {
   if (!source && view.querySelector(".lp-empty-hint")) {
     const field = view.firstElementChild;
@@ -232,15 +316,21 @@ function mapFields(view, source) {
     .filter(field => !field.querySelector("p,li,table"));
   let offset = 0;
   const mapped = [];
+  const mappedTables = new Set();
   for (const field of fields) {
+    if (field.matches("td,th")) {
+      const table = field.closest("table");
+      if (mappedTables.has(table)) continue;
+      mappedTables.add(table);
+      const result = mapTable(table, source, offset);
+      if (!result) return [];
+      mapped.push(...result.cells);
+      offset = result.end;
+      continue;
+    }
     let prefix;
     if (/^H[1-6]$/.test(field.tagName)) prefix = /^\s*(?:#{1,6}[ \t]+)?/;
-    else if (field.matches("li,.lp-list-label")) prefix = /^\s*(?:[-*+]|\d+\.)[ \t]+/;
-    else if (field.matches("td,th")) {
-      if (field.cellIndex > 0) prefix = /^[ \t]*\|[ \t]*/;
-      else if (!offset) prefix = /^[ \t]*\|?[ \t]*/;
-      else prefix = /^[ \t]*\|?[ \t]*\n(?:[ \t|:\-]+\n)?[ \t]*\|?[ \t]*/;
-    }
+    else if (field.matches("li,.lp-list-label,li > p:first-child")) prefix = listMarkerPrefix;
     else prefix = field.closest("blockquote") ? /^\s*(?:>[ \t]?)+/ : /^\s*/;
     const start = source.slice(offset).match(prefix);
     if (!start) return [];
@@ -272,9 +362,9 @@ export function prepareVisualBlock(view, source, onChange) {
     field.addEventListener("input", () => {
       let paragraphBreak = "\n\n";
       if (field.matches("td,th")) paragraphBreak = "<br>";
-      else if (field.matches("li,.lp-list-label")) {
+      else if (field.matches("li,.lp-list-label,li > p")) {
         const lineStart = source.lastIndexOf("\n", entry.from - 1) + 1;
-        paragraphBreak = "\n" + source.slice(lineStart, entry.from);
+        paragraphBreak = (field.tagName === "P" ? "\n\n" : "\n") + source.slice(lineStart, entry.from);
       } else if (field.closest("blockquote")) paragraphBreak = "\n> ";
       const markdown = entry.serialize ? entry.serialize() : inlineMarkdown(field, paragraphBreak);
       entry.value = field.innerHTML === "<br>" ? "" : markdown;

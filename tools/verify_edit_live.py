@@ -74,6 +74,116 @@ Mixed __style__, $a+b$ and ![inline](images/pixel.png) end.
 """
 
 
+# 表格与宽松列表的各种写法：不改动时回写全文必须与原文相同；改某个可编辑字段时只多出一处插入，
+# 且落在该字段所在的块里。名字 -> (原文, 可直接编辑的单元格数, 单元格总数)
+FIDELITY_CASES = {
+    "对齐空格": ("| 名称   | 类型  |\n| ------ | ----- |\n| id     | int   |\n| name   | str   |", 6, 6),
+    "无首尾竖线": ("名称 | 类型\n--- | ---\nid | int", 4, 4),
+    "换行标签": ("| 键 | 值 |\n| --- | --- |\n| 多行 | 一<br>二 |", 4, 4),
+    "自闭合换行": ("| 键 | 值 |\n| --- | --- |\n| 甲 | 一<br/>二 |\n| 乙 | 三<BR />四 |", 6, 6),
+    "行内标签": ("| 键 | 值 |\n| --- | --- |\n| 颜色 | <span>红</span> 与 <kbd>Ctrl</kbd> |", 3, 4),
+    "实体": ("| 键 | 值 |\n| --- | --- |\n| 空格 | a&nbsp;b &lt;x&gt; |", 4, 4),
+    "转义竖线与代码竖线": ("| 键 | 值 |\n| --- | --- |\n| 竖线 | a \\| b |\n| 代码 | `a\\|b` 与 `x|y` |", 6, 6),
+    "自动链接": ("| 键 | 值 |\n| --- | --- |\n| 链接 | <https://example.org> |", 3, 4),
+    "尖括号文本": ("| 键 | 值 |\n| --- | --- |\n| 泛型 | Map<K, V> 与 a < b |", 3, 4),
+    "单元格不齐": ("| 甲 | 乙 | 丙 |\n| --- | --- | --- |\n| 1 | 2 |\n| 3 |", 6, 9),
+    "空单元格": ("| 甲 | 乙 |\n| --- | --- |\n|  | 2 |\n| 3 |  |", 6, 6),
+    "缩进与不规则空格": ("  | a  |   b |\n  |---|:-:|\n  | c |  d  |\n  | e | f", 6, 6),
+    "公式与货币": ("| 键 | 值 |\n| --- | --- |\n| 范数 | $a+b$ 与 $5 到 $10 |", 4, 4),
+    "混排": ("| 键 | 值 |\n| --- | --- |\n| 代码 | **`T<K>`** 与 ~~旧~~ [文档](https://e.com \"标题\") |", 4, 4),
+    "图片单元格": ("| 键 | 值 |\n| --- | --- |\n| 图 | ![icon](images/pixel.png) |", 4, 4),
+}
+FIDELITY_LISTS = {
+    "宽松无序": "- a\n\n- b\n\n- c",
+    "宽松有序": "1. a\n\n2. b\n\n3. c",
+    "混用无序符号": "- a\n\n* b\n\n+ c",
+    "宽松嵌套": "- a\n\n    - x\n\n    - y\n\n- b",
+    "宽松多段": "- a\n\n    more\n\n- b",
+}
+
+
+def fidelity_doc():
+    parts = []
+    for name, (source, _, _) in FIDELITY_CASES.items():
+        parts += ["### " + name, source]
+    for name, source in FIDELITY_LISTS.items():
+        parts += ["### " + name, source]
+    return "\n\n".join(parts) + "\n"
+
+
+FIDELITY_JS = r"""
+((doc) => {
+  const edit = window.__ink.edit;
+  const root = document.querySelector('#editorLive');
+  const flat = text => text.replace(/\r\n/g, '\n');
+  const original = edit.getText();
+  const blocks = edit.splitBlocks(original).map(block => block.text);
+  const problems = [];
+  if (original !== doc) problems.push('不改动时回写全文与原文不同');
+  const editableSelector = '[contenteditable="true"],[contenteditable="plaintext-only"]';
+  const fields = [...root.querySelectorAll(editableSelector)].filter(el => !el.parentElement.closest(editableSelector));
+  const source = flat(original);
+  for (const el of fields) {
+    const index = Number(el.closest('.lp-block').dataset.idx);
+    const start = source.indexOf(blocks[index]);
+    const node = document.createTextNode('Z');
+    el.appendChild(node);
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    const edited = flat(edit.getText());
+    node.remove();
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    let at = 0;
+    while (at < source.length && source[at] === edited[at]) at++;
+    const label = blocks[index].slice(0, 30) + ' / ' + el.tagName;
+    if (edited.length !== source.length + 1 || edited[at] !== 'Z' || edited.slice(0, at) + edited.slice(at + 1) !== source) {
+      problems.push('改一个字段后不只多出一处插入：' + label);
+    } else if (at < start || at > start + blocks[index].length) {
+      problems.push('插入落到了块外：' + label);
+    }
+    if (edit.getText() !== original) problems.push('撤销改动后全文与原文不同：' + label);
+  }
+  const tables = [...root.querySelectorAll('table')].map(table => {
+    const cells = [...table.querySelectorAll('th,td')];
+    const block = table.closest('.lp-block');
+    return {
+      name: blocks[Number(block.dataset.idx) - 1].replace('### ', ''),
+      cells: cells.length,
+      editable: cells.filter(cell => cell.isContentEditable).length,
+      leaked: cells.filter(cell => !cell.isContentEditable && cell.hasAttribute('contenteditable')).length,
+    };
+  });
+  const lists = [...root.querySelectorAll('.lp-block')].filter(b => b.querySelector('ul,ol')).map(block => ({
+    name: blocks[Number(block.dataset.idx) - 1].replace('### ', ''),
+    paragraphs: block.querySelectorAll('li > p').length,
+    editable: block.querySelectorAll('li > p[contenteditable]').length,
+  }));
+  return {problems, tables, lists};
+})(__DOC__)
+"""
+
+
+def check_edit_fidelity(window, res):
+    doc = fidelity_doc()
+    expected_tables = len(FIDELITY_CASES)
+    for label, text in (("lf", doc), ("crlf", doc.replace("\n", "\r\n"))):
+        js(window, "document.querySelectorAll('#editorLive table').forEach(t => t.dataset.stale = '1')")
+        js(window, "window.__ink.edit.setText(%s)" % json.dumps(text))
+        assert wait_js(window, "document.querySelectorAll('#editorLive table:not([data-stale])').length === %d"
+                       % expected_tables), label
+        report = json_js(window, FIDELITY_JS.replace("__DOC__", json.dumps(text)))
+        res["fidelity_" + label] = report
+        assert not report["problems"], report["problems"]
+        found = {t["name"]: (t["editable"], t["cells"]) for t in report["tables"]}
+        for name, (_, editable, cells) in FIDELITY_CASES.items():
+            assert found.get(name) == (editable, cells), (name, found.get(name))
+        assert all(t["leaked"] == 0 for t in report["tables"]), report["tables"]
+        # 宽松列表在编辑态是同一个列表块，列表项都能直接编辑
+        for name, source in FIDELITY_LISTS.items():
+            items = [l for l in report["lists"] if l["name"] == name]
+            assert len(items) == 1, (name, report["lists"])
+            assert items[0]["editable"] == items[0]["paragraphs"] > 0, items[0]
+
+
 def wait_js(window, expression, timeout=20):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -415,6 +525,11 @@ def job(window, tmp_dir, doc_path):
         res["conflict_force_ok"] = found
         assert res["conflict_force_ok"], after_force[:200]
 
+        # ---- 表格与宽松列表：回写保真 ----
+        res["stage"] = "edit-fidelity"
+        check_edit_fidelity(window, res)
+        res["edit_fidelity_ok"] = True
+
         # ---- 退出编辑：正文重新渲染 ----
         res["stage"] = "exit"
         js(window, "window.__ink.edit.exit()")
@@ -433,6 +548,7 @@ def job(window, tmp_dir, doc_path):
             and res["delete_image_ok"]
             and res["save_matches_disk"]
             and res["conflict_reject_ok"] and res["conflict_force_ok"]
+            and res["edit_fidelity_ok"]
             and res["exit_body_class_ok"] and res["exit_content_visible_ok"]
             and res["no_js_errors"]
         )
