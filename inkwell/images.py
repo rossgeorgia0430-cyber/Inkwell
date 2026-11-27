@@ -128,7 +128,7 @@ def _localize_data_uri(src):
             return None
 
         if is_base64:
-            cleaned = re.sub(r"\s+", "", payload)
+            cleaned = "".join(payload.split())
             if not cleaned:
                 return None
             data = base64.b64decode(cleaned, validate=True)

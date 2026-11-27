@@ -1,6 +1,6 @@
 // 图片：悬停复制按钮 + 点击进入灯箱；灯箱同时承载 Mermaid 图示（openSvgViewer）。
 import { state } from "./state.js";
-import { api, flash, toast, inRenderableRoot } from "./util.js";
+import { api, flash, toast, inRenderableRoot, isMacPlatform, formatModShortcut } from "./util.js";
 
 const COPY_ICON_SVG = '<svg viewBox="0 0 24 24" class="copy-ico" aria-hidden="true"><rect x="8" y="8" width="10" height="11" rx="1.5"/><path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6"/></svg>';
 
@@ -74,12 +74,15 @@ export function copyImage(img, btn) {
 }
 
 export function clearSelectedImage() {
+  if (state.selectedImage) state.selectedImage.classList.remove("is-selected");
   state.selectedImage = null;
 }
 
 export function selectImage(img) {
   if (!img || !inRenderableRoot(img)) return;
+  if (state.selectedImage !== img) clearSelectedImage();
   state.selectedImage = img;
+  img.classList.add("is-selected");
 }
 
 function createImageCopyButton() {
@@ -127,7 +130,7 @@ function ensureImageViewer() {
   viewer.setAttribute("aria-modal", "true");
   viewer.setAttribute("aria-label", "图片预览");
   viewer.innerHTML = '<div class="image-viewer-actions"><button type="button" class="image-viewer-btn image-viewer-copy" aria-label="复制图片">'
-    + COPY_ICON_SVG + '<span class="copy-label">复制</span></button><button type="button" class="image-viewer-btn image-viewer-close" aria-label="关闭图片预览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><div class="image-viewer-stage"><img class="image-viewer-image" alt=""></div><div class="image-viewer-zoom"><button type="button" class="image-zoom-btn image-zoom-out" aria-label="缩小图片" title="缩小 (Ctrl+滚轮向下)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button><span class="image-zoom-level" aria-live="polite">100%</span><button type="button" class="image-zoom-btn image-zoom-in" aria-label="放大图片" title="放大 (Ctrl+滚轮向上)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button><span class="image-zoom-hint">右键拖动平移</span></div>';
+    + COPY_ICON_SVG + '<span class="copy-label">复制</span></button><button type="button" class="image-viewer-btn image-viewer-close" aria-label="关闭图片预览"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><div class="image-viewer-stage"><img class="image-viewer-image" alt=""></div><div class="image-viewer-zoom"><button type="button" class="image-zoom-btn image-zoom-out" aria-label="缩小图片" title="缩小 (' + formatModShortcut("mod") + '+滚轮向下)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6"/></svg></button><span class="image-zoom-level" aria-live="polite">100%</span><button type="button" class="image-zoom-btn image-zoom-in" aria-label="放大图片" title="放大 (' + formatModShortcut("mod") + '+滚轮向上)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/></svg></button><span class="image-zoom-hint">' + (isMacPlatform() ? "双指捏合缩放" : "右键拖动平移") + '</span></div>';
   var close = viewer.querySelector(".image-viewer-close");
   var preview = viewer.querySelector(".image-viewer-image");
   var copy = viewer.querySelector(".image-viewer-copy");
@@ -164,6 +167,17 @@ function ensureImageViewer() {
   });
   window.addEventListener("blur", endImagePan);   // 拖出窗口松开时复位
   viewer.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  // Safari 的触控板捏合不产生带 Ctrl 的 wheel，只发 gesture 事件；e.scale 是相对手势开始时的倍率。
+  var gestureStartScale = 1;
+  viewer.addEventListener("gesturestart", function (e) {
+    e.preventDefault();
+    gestureStartScale = state.imageViewerScale;
+  });
+  viewer.addEventListener("gesturechange", function (e) {
+    e.preventDefault();
+    state.imageViewerUserAdjusted = true;
+    applyImageViewerScale(gestureStartScale * e.scale, true, { x: e.clientX, y: e.clientY });
+  });
   document.body.appendChild(viewer);
   state.imageViewer = viewer;
   return viewer;
@@ -419,5 +433,6 @@ export function onContentImageClick(e) {
   if (!img || !inRenderableRoot(img)) return;
   e.preventDefault();
   e.stopImmediatePropagation();
-  openImageViewer(img);
+  // 编辑区里单击只选中图片，双击才放大（见 editor.js 的 dblclick 绑定）
+  if (!(state.editorLive && state.editorLive.contains(img))) openImageViewer(img);
 }

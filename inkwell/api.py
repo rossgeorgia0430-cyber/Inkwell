@@ -9,6 +9,7 @@ import threading
 import uuid
 import webbrowser
 import html as html_module
+from concurrent.futures import Future
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
@@ -136,6 +137,7 @@ class Api:
         self._load_lock = threading.Lock()
         self.preferences = documents.load_preferences()
         self._init_path = None
+        self._prerendered = None  # (path, Future)：窗口启动期间后台渲染的首屏
         self._pending_open_path = None
         self._initial_delivered = False
         self._open_seq = 0
@@ -483,26 +485,41 @@ class Api:
             log_exception()
             return _error_payload(exc, "无法打开欢迎页")
 
+    def start_prerender(self):
+        """按 _init_path 在后台提前渲染首屏，与窗口和桥的启动并行。"""
+        path, future = self._init_path, Future()
+        self._prerendered = (path, future)
+        threading.Thread(
+            target=lambda: future.set_result(self._render_startup_payload(path)),
+            name="InkwellPrerender", daemon=True).start()
+
     def pull_initial(self):
         """前端在 pywebviewready 后拉取首屏；WKWebView 上 evaluate_js/eval 可能被 CSP 拦住。
 
         首屏渲染期间若 Finder 送来新文件会先记到 _pending_open_path；这里在同一把
         _load_lock 下循环重建，直到没有新文件到达再标记"首屏已交付"并返回。
+        路径没变时直接取 start_prerender 的结果，不重复渲染。
         """
         if self._closing:
             return {"ok": False, "cancelled": True}
         with self._load_lock:
-            path = self._init_path
+            prerendered, self._prerendered = self._prerendered, None
             while True:
-                payload = self._render_startup_payload(path)
                 with self._state_lock:
-                    pending = self._pending_open_path
-                    self._pending_open_path = None
-                    if pending is None:
+                    # 待打开的文件优先于 _init_path，避免白渲染一遍欢迎页。
+                    if self._pending_open_path is not None:
+                        self._init_path = self._pending_open_path
+                        self._pending_open_path = None
+                    path = self._init_path
+                if prerendered and prerendered[0] == path:
+                    payload = prerendered[1].result()
+                else:
+                    payload = self._render_startup_payload(path)
+                prerendered = None
+                with self._state_lock:
+                    if self._pending_open_path is None:
                         self._initial_delivered = True
                         return payload
-                    path = pending
-                    self._init_path = path
 
     def _accept_finder_path(self, path):
         """macOS Finder/Open With 投递的文件路径。
@@ -563,8 +580,16 @@ class Api:
             log_exception()
             return False
 
+    def set_unsaved_changes(self, dirty):
+        """有未保存修改时，Alt+F4、⌘W、⌘Q 这类绕过页面的关闭也要先经 pywebview 的确认框。"""
+        if self._window is not None:
+            self._window.confirm_close = bool(dirty)
+
     def win_close(self):
         self._closing = True
+        # 页面的关闭按钮已经问过一次，不能让 pywebview 再问第二遍。
+        if self._window is not None:
+            self._window.confirm_close = False
         if IS_MACOS:
             from .host_mac import schedule_window_close
             schedule_window_close(self._window)

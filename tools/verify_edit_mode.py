@@ -17,6 +17,11 @@ class _FakeWindow:
     def __init__(self, pick_path=None, save_path=None):
         self.pick_path = pick_path
         self.save_path = save_path
+        self.confirm_close = False
+        self.destroyed = False
+
+    def destroy(self):
+        self.destroyed = True
 
     def create_file_dialog(self, dialog_type, **kwargs):
         # pywebview: OPEN_DIALOG=10, SAVE_DIALOG=30；也可为 FileDialog 枚举
@@ -89,6 +94,12 @@ def main():
         assert forced["ok"], forced
         assert doc.read_text(encoding="utf-8") == "# mine\n"
 
+        # 保存后保留原文件的权限位（Windows 只有只读位，没有可断言的 640）
+        if os.name != "nt":
+            doc.chmod(0o640)
+            assert api.save_document("# mode\n", str(doc), None)["ok"]
+            assert (doc.stat().st_mode & 0o777) == 0o640
+
         # 不能保存到非当前活动文档
         other = root / "other.md"
         other.write_text("# other\n", encoding="utf-8")
@@ -127,6 +138,29 @@ def main():
         big = "x" * (MAX_DOCUMENT_BYTES + 10)
         bad = api.save_document(big, str(doc), None)
         assert not bad["ok"]
+
+        # 只读文件保存失败后，目录里不能留下临时文件（Windows 上只读文件无法被替换）
+        if os.name == "nt":
+            import stat
+            ro = root / "readonly.md"
+            ro.write_text("# ro\n", encoding="utf-8")
+            ro.chmod(stat.S_IREAD)
+            try:
+                api.activate_path(str(ro))
+                assert not api.save_document("# changed\n", str(ro), None)["ok"]
+                assert not [p for p in root.iterdir() if p.name.endswith(".tmp")]
+            finally:
+                ro.chmod(stat.S_IWRITE)
+            api.activate_path(str(doc))
+
+        # 未保存修改状态同步给窗口，页面自己的关闭按钮走 win_close 时要清掉，避免确认两遍
+        api.set_unsaved_changes(True)
+        assert api._window.confirm_close is True
+        api.set_unsaved_changes(False)
+        assert api._window.confirm_close is False
+        api.set_unsaved_changes(True)
+        api.win_close()
+        assert api._window.confirm_close is False and api._window.destroyed
 
         # welcome/no path
         api2 = Api()

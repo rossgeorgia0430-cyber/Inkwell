@@ -11,7 +11,27 @@ import { exitEditMode } from "./edit/editor.js";
 function beginNavigation() { state.navGeneration += 1; return state.navGeneration; }
 function isCurrentNavigation(generation) { return generation === state.navGeneration; }
 
+let releaseScrollHold = () => {};
+
+// 重渲染后图示、图片会晚于首次还原继续撑高页面；Chromium 靠滚动锚定补回位置，
+// WebKit 没有，所以在稳定期内每次内容高度变化都重设一次，用户一操作就放手。
+function holdScrollPosition(top) {
+  releaseScrollHold();
+  const userInputs = ["wheel", "touchstart", "pointerdown", "keydown"];
+  const observer = new ResizeObserver(() => { state.main.scrollTop = top; });
+  const timer = setTimeout(release, 1000);
+  function release() {
+    clearTimeout(timer);
+    observer.disconnect();
+    userInputs.forEach(name => window.removeEventListener(name, release, true));
+  }
+  observer.observe(state.content);
+  userInputs.forEach(name => window.addEventListener(name, release, true));
+  releaseScrollHold = release;
+}
+
 export function renderInto(p) {
+  releaseScrollHold();
   if (!p) return false;
   if (p.ok === false && !p.content) return false;
   state.content.innerHTML = p.content || "";
@@ -156,6 +176,7 @@ export function applyPayload(p) {
   var keep = state.main.scrollTop;
   renderInto(p);
   state.main.scrollTop = keep;
+  holdScrollPosition(keep);
 }
 
 // 启动首帧先显示轻量外壳，后台渲染完成后用此入口装载首篇文档。

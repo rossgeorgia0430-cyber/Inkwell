@@ -12,6 +12,16 @@ export function isMacPlatform() {
   return (window.__BOOT__ && window.__BOOT__.platform) === "darwin";
 }
 
+// Safari 先发 compositionend 再发那次 keydown（keyCode 229、isComposing 已为 false），两个条件都要判断。
+export function isImeKeydown(e) { return e.isComposing || e.keyCode === 229; }
+
+// Safari 的智能引号、自动纠错会改写 Markdown、代码和 LaTeX 的输入，可编辑字段统一关掉。
+export function disableTextSubstitution(el) {
+  el.spellcheck = false;
+  el.setAttribute("autocorrect", "off");
+  el.setAttribute("autocapitalize", "off");
+}
+
 export function formatModShortcut(spec) {
   if (isMacPlatform()) {
     return spec.replace(/^mod\+Shift\+/i, "⇧⌘").replace(/^mod\+/i, "⌘");
@@ -83,6 +93,23 @@ export function toast(msg) {
   t.classList.add("show");
   clearTimeout(state.toastTimer);
   state.toastTimer = setTimeout(function () { t.classList.remove("show"); }, 2600);
+}
+
+// 新插入的内容里有图片还没加载完时，先按旧高度撑住，避免整体塌缩再弹回；加载完释放。
+export function holdHeightWhileImagesLoad(el, height) {
+  if (!(height > 0) || Array.from(el.querySelectorAll("img")).every(image => image.complete)) return;
+  const held = height + "px";
+  el.style.minHeight = held;
+  imagesSettled(el).then(() => { if (el.style.minHeight === held) el.style.minHeight = ""; });
+}
+
+// root 里未加载完的图片都加载完（或失败）后完成；没有未加载的图片时立即完成。
+export function imagesSettled(root) {
+  const loading = Array.from(root.querySelectorAll("img")).filter(image => !image.complete);
+  return Promise.all(loading.map(image => new Promise(resolve => {
+    image.addEventListener("load", resolve, { once: true });
+    image.addEventListener("error", resolve, { once: true });
+  })));
 }
 
 // 有未保存修改时统一征求用户确认；message 按各调用场景措辞。

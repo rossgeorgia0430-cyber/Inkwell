@@ -15,6 +15,8 @@ _OPEN_FILES_CALLBACK = None
 _DELEGATE_PATCHED = False
 _EXITING = False
 _EXIT_WATCHDOG_STARTED = False
+# NSEventModifierFlagShift
+_SHIFT_FLAG = 1 << 17
 
 
 def _path_to_png_bytes(path: Path) -> bytes:
@@ -423,10 +425,18 @@ def _paths_from_open_docs_event(event):
 
 
 def configure_app_identity():
-    """把进程名设为 Inkwell，避免 AppKit 弹窗把发起者显示成 python。"""
+    """把进程名设为 Inkwell，避免 AppKit 弹窗把发起者显示成 python；并关掉 WebKit 的文本自动替换。"""
     try:
-        from Foundation import NSProcessInfo
+        from Foundation import NSProcessInfo, NSUserDefaults
         NSProcessInfo.processInfo().setProcessName_("Inkwell")
+        # 智能引号、破折号、文本替换、拼写纠正会改写 Markdown、代码和 LaTeX 的输入；
+        # registerDefaults_ 只登记本进程的默认值，不写用户的偏好设置。
+        NSUserDefaults.standardUserDefaults().registerDefaults_({
+            "WebAutomaticQuoteSubstitutionEnabled": False,
+            "WebAutomaticDashSubstitutionEnabled": False,
+            "WebAutomaticTextReplacementEnabled": False,
+            "WebAutomaticSpellingCorrectionEnabled": False,
+        })
     except Exception:
         log_exception()
 
@@ -518,6 +528,23 @@ def _call_base(base, name, *args):
         log_exception()
 
 
+def _redo_in_responder(host, event) -> bool:
+    """⇧⌘Z 重做。pywebview 对按住 ⌘ 的 z 一律当撤销，带 Shift 时要在它之前截住。
+
+    返回 False 表示不是 ⇧⌘Z 或取不到撤销管理器，交回 pywebview 原有的按键处理。
+    """
+    if str(event.charactersIgnoringModifiers() or "").lower() != "z":
+        return False
+    window = host.window()
+    responder = window.firstResponder() if window is not None else None
+    manager = responder.undoManager() if responder is not None and hasattr(responder, "undoManager") else None
+    if manager is None:
+        return False
+    if manager.canRedo():
+        manager.redo()
+    return True
+
+
 def _patch_webview_app_delegate():
     """pywebview 自带的 AppDelegate 没有实现 application:openFile:。Info.plist 里
     配置了 CFBundleDocumentTypes 后，AppKit 会弹出『python 无法打开 Markdown
@@ -568,14 +595,17 @@ def _patch_webview_app_delegate():
             return True
 
         def applicationShouldTerminate_(self, app):
-            mark_exiting()
+            # 有未保存修改时基类会弹确认框；用户取消后应用继续运行，不能提前标记退出。
+            allowed = True
             method = getattr(Base, "applicationShouldTerminate_", None)
             if method is not None:
                 try:
-                    return method(self, app)
+                    allowed = bool(method(self, app))
                 except Exception:
                     log_exception()
-            return True
+            if allowed:
+                mark_exiting()
+            return allowed
 
     _orig_will_close = WindowBase.windowWillClose_
 
@@ -595,11 +625,14 @@ def _patch_webview_app_delegate():
     def keyDown_(self, event):
         try:
             from AppKit import NSApp, NSCommandKeyMask
-            if event.modifierFlags() & NSCommandKeyMask:
+            flags = event.modifierFlags()
+            if flags & NSCommandKeyMask:
                 chars = str(event.characters() or "")
                 if chars == "q":
-                    mark_exiting()
+                    # 走 terminate_ 才会经过 applicationShouldTerminate_ 的未保存确认。
                     NSApp.terminate_(None)
+                    return
+                if flags & _SHIFT_FLAG and _redo_in_responder(self, event):
                     return
         except Exception:
             log_exception()

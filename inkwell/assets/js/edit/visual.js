@@ -1,18 +1,70 @@
+import { isImeKeydown, disableTextSubstitution } from "../util.js";
 import { renderMath } from "../reader.js";
 import { prepareStructured } from "./structured.js";
+import { scanLinkDestination } from "./blocks.js";
 
 // 只有渲染内容能与原文逐段对应时才开放直接编辑，保留其余 Markdown 语法。
 const delimiters = { STRONG: "**", B: "**", EM: "*", I: "*", CODE: "`" };
 
 const originalRuns = new WeakMap();
 
-const entities = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
+// 图片和行内公式的原始 Markdown 按序号存在这里，序号写在节点的 data-lp-atom 上。
+// 浏览器合并段落时会重建节点，以节点为键的映射随之丢失，data-* 属性却会保留下来。
+const atomRuns = new WeakMap();
+
+function registerAtom(node, markdown) {
+  const view = node.closest(".lp-view");
+  let runs = atomRuns.get(view);
+  if (!runs) atomRuns.set(view, runs = []);
+  node.dataset.lpAtom = String(runs.push(markdown) - 1);
+}
+
+function atomMarkdown(node) {
+  const view = node.closest(".lp-view");
+  const index = node.dataset.lpAtom;
+  return view && index !== undefined ? atomRuns.get(view)?.[Number(index)] : undefined;
+}
+
+function setAtomMarkdown(node, markdown) {
+  atomRuns.get(node.closest(".lp-view"))[Number(node.dataset.lpAtom)] = markdown;
+}
+
+// 链接和图片 ] 之后的 (地址) 或 [引用]，返回结尾位置；没有返回 -1。
+const referenceLabel = /\[[^\]\n]*\]/y;
+function matchLinkTail(source, at) {
+  if (source[at] === "(") return scanLinkDestination(source, at + 1);
+  referenceLabel.lastIndex = at;
+  return referenceLabel.test(source) ? referenceLabel.lastIndex : -1;
+}
+
+const imageHead = /!\[([^\]\n]*)\]/y;
+function matchImage(source, offset) {
+  imageHead.lastIndex = offset;
+  const head = imageHead.exec(source);
+  if (!head) return null;
+  const end = matchLinkTail(source, imageHead.lastIndex);
+  return end < 0 ? null : { alt: head[1], end };
+}
+
+const entities = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&nbsp;": "\u00a0" };
+const lineBreakTag = /<br[ \t]*\/?>/iy;
+const listMarkerPrefix = /^\s*(?:[-*+]|\d+\.)[ \t]+/;
+
+// 浮层相对 .lp-block 定位，贴在目标下方且不超出块的左右边界
+function placeBelow(floating, target) {
+  const block = target.closest(".lp-block");
+  const blockRect = block.getBoundingClientRect();
+  const rect = target.getBoundingClientRect();
+  const left = Math.min(rect.left - blockRect.left, blockRect.width - floating.offsetWidth);
+  floating.style.left = Math.max(0, left) + "px";
+  floating.style.top = rect.bottom - blockRect.top + 4 + "px";
+}
 
 function bindInlineFormula(node, raw) {
   node.contentEditable = "false";
   node.tabIndex = 0;
   node.title = "编辑行内公式";
-  originalRuns.set(node, { markdown: raw });
+  registerAtom(node, raw);
   function open() {
     const host = node.closest('[contenteditable="true"]');
     if (!host) return;
@@ -22,15 +74,17 @@ function bindInlineFormula(node, raw) {
     label.className = "lp-inline-formula";
     label.textContent = "LaTeX ";
     const input = document.createElement("input");
+    disableTextSubstitution(input);
     input.value = node.dataset.latex;
     label.append(input);
     view.append(label);
-    input.focus();
+    placeBelow(label, node);
+    input.focus({ preventScroll: true });
     let timer;
     input.addEventListener("input", () => {
       const value = input.value;
       const dollars = raw.startsWith("$") && value && !/[$\n]/.test(value) && value.trim() === value;
-      originalRuns.set(node, { markdown: dollars ? "$" + value + "$" : "\\(" + value + "\\)" });
+      setAtomMarkdown(node, dollars ? "$" + value + "$" : "\\(" + value + "\\)");
       node.dataset.latex = value;
       host.dispatchEvent(new Event("input", { bubbles: true }));
       clearTimeout(timer);
@@ -38,7 +92,7 @@ function bindInlineFormula(node, raw) {
     });
     input.addEventListener("blur", () => label.remove());
     input.addEventListener("keydown", event => {
-      if (!event.isComposing && (event.key === "Enter" || event.key === "Escape")) {
+      if (!isImeKeydown(event) && (event.key === "Enter" || event.key === "Escape")) {
         event.preventDefault();
         node.focus();
       }
@@ -80,18 +134,27 @@ function matchInline(parent, source, offset) {
       continue;
     }
     if (name === "IMG" && source.startsWith("![", offset)) {
-      const image = /^!\[([^\]\n]*)\](?:\((?:\\.|[^()\\]|\((?:\\.|[^()\\])*\))*\)|\[[^\]\n]*\])/.exec(source.slice(offset));
-      if (!image || image[1] !== node.alt) return -1;
+      const image = matchImage(source, offset);
+      if (!image || image.alt !== node.alt) return -1;
       const atom = document.createElement("span");
       atom.contentEditable = "false";
       node.replaceWith(atom);
       atom.append(node);
-      originalRuns.set(atom, { markdown: image[0] });
-      offset += image[0].length;
+      registerAtom(atom, source.slice(offset, image.end));
+      offset = image.end;
       continue;
     }
     let mark = delimiters[name];
     if (name === "A") mark = "[";
+    if (name === "BR") {
+      lineBreakTag.lastIndex = offset;
+      const tag = lineBreakTag.exec(source);
+      if (tag) {
+        originalRuns.set(node, { markdown: tag[0] });
+        offset += tag[0].length;
+        continue;
+      }
+    }
     if (name === "BR" && source.startsWith("  \n", offset)) {
       originalRuns.set(node, { markdown: "  " });
       offset += 2;
@@ -112,10 +175,9 @@ function matchInline(parent, source, offset) {
     if (offset < 0) return -1;
     let close = mark;
     if (name === "A") {
-      const suffix = source.slice(offset);
-      const link = /^\](?:\((?:\\.|[^()\\]|\((?:\\.|[^()\\])*\))*\)|\[[^\]\n]*\])/.exec(suffix);
-      if (!suffix.startsWith("]")) return -1;
-      close = link?.[0] || "]";
+      if (source[offset] !== "]") return -1;
+      const tailEnd = matchLinkTail(source, offset + 1);
+      close = tailEnd < 0 ? "]" : source.slice(offset, tailEnd);
     }
     if (!source.startsWith(close, offset)) return -1;
     offset += close.length;
@@ -145,12 +207,21 @@ function inlineMarkdown(parent, paragraphBreak) {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) continue;
     const name = node.tagName;
+    if (name === "BUTTON") continue; // 界面控件，不是正文
+    const atom = atomMarkdown(node);
+    if (atom !== undefined) {
+      result += atom;
+      continue;
+    }
+    // 图片和公式找不到原文就不能猜：返回 null，由调用方放弃这次回写。
+    if (name === "IMG" || node.matches(".math-inline")) return null;
     const original = originalRuns.get(node);
     if (original?.markdown !== undefined) {
       result += original.markdown;
       continue;
     }
     const inner = inlineMarkdown(node, paragraphBreak);
+    if (inner === null) return null;
     if (name === "CODE") {
       let ticks = original?.mark?.length || 1;
       for (const match of inner.matchAll(/`+/g)) ticks = Math.max(ticks, match[0].length + 1);
@@ -164,7 +235,7 @@ function inlineMarkdown(parent, paragraphBreak) {
     }
     else if (delimiters[name]) result += delimiters[name] + inner + delimiters[name];
     else if (name === "A") result += "[" + inner + "](" + node.getAttribute("href") + ")";
-    else if (name === "BR" && node.nextSibling) result += "  \n";
+    else if (name === "BR" && node.nextSibling) result += paragraphBreak === "<br>" ? "<br>" : "  \n";
     else if (name === "BR") continue;
     else if (name === "DIV" || name === "P") result += (node.previousSibling ? paragraphBreak : "") + inner;
     else result += inner;
@@ -194,8 +265,81 @@ function htmlFields(view, source) {
     field.append(node);
     const value = tokens[i][0];
     return { field, value, from: tokens[i].index, to: tokens[i].index + value.length,
-      serialize: () => field.innerText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") };
+      serialize: () => field.textContent.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") };
   });
+}
+
+const isBlank = character => character === " " || character === "\t";
+
+// 反引号包起来的代码里的竖线不分列；没有闭合的反引号按普通字符处理。
+function skipCodeSpan(source, index, end) {
+  let open = index;
+  while (open < end && source[open] === "`") open++;
+  for (let j = open; j < end;) {
+    if (source[j] !== "`") { j++; continue; }
+    let close = j;
+    while (close < end && source[close] === "`") close++;
+    if (close - j === open - index) return close;
+    j = close;
+  }
+  return open;
+}
+
+// 一行表格原文按未转义的竖线切成单元格，返回各单元格在原文中的范围（不含竖线）。
+function splitTableRow(source, lineStart, lineEnd) {
+  let from = lineStart;
+  while (from < lineEnd && isBlank(source[from])) from++;
+  if (source[from] === "|") from++;
+  let end = lineEnd;
+  while (end > from && isBlank(source[end - 1])) end--;
+  if (end > from && source[end - 1] === "|" && source[end - 2] !== "\\") end--;
+  const segments = [];
+  let segmentFrom = from;
+  for (let i = from; i < end; i++) {
+    if (source[i] === "\\") i++;
+    else if (source[i] === "`") i = skipCodeSpan(source, i, end) - 1;
+    else if (source[i] === "|") {
+      segments.push({ from: segmentFrom, to: i });
+      segmentFrom = i + 1;
+    }
+  }
+  segments.push({ from: segmentFrom, to: end });
+  return segments;
+}
+
+// 单元格内容与原文逐字符对得上才开放编辑；对不上（含缺失的单元格）的整格保持原样、不可编辑。
+function mapTableCell(cell, source, segment) {
+  if (!segment) return null;
+  let from = segment.from, end = segment.to;
+  while (from < end && isBlank(source[from])) from++;
+  while (end > from && isBlank(source[end - 1])) end--;
+  const to = matchInline(cell, source, from);
+  return to === end ? { field: cell, from, to, value: source.slice(from, to) } : null;
+}
+
+// 表格按行对应原文：表头在第一行，第二行是分隔行，之后每行对应一个正文行。
+function mapTable(table, source, offset) {
+  const rows = [...table.rows];
+  const blanks = /\s*/y;
+  blanks.lastIndex = offset;
+  blanks.exec(source);
+  const lines = [];
+  for (let start = blanks.lastIndex; lines.length <= rows.length && start <= source.length;) {
+    const end = source.indexOf("\n", start);
+    lines.push({ start, end: end === -1 ? source.length : end });
+    start = lines[lines.length - 1].end + 1;
+  }
+  if (lines.length <= rows.length) return null;
+  const cells = [];
+  rows.forEach((row, index) => {
+    const line = lines[index ? index + 1 : 0];
+    const segments = splitTableRow(source, line.start, line.end);
+    [...row.cells].forEach((cell, column) => {
+      const entry = mapTableCell(cell, source, segments[column]);
+      if (entry) cells.push(entry);
+    });
+  });
+  return { cells, end: lines[rows.length].end };
 }
 
 function mapFields(view, source) {
@@ -221,15 +365,21 @@ function mapFields(view, source) {
     .filter(field => !field.querySelector("p,li,table"));
   let offset = 0;
   const mapped = [];
+  const mappedTables = new Set();
   for (const field of fields) {
+    if (field.matches("td,th")) {
+      const table = field.closest("table");
+      if (mappedTables.has(table)) continue;
+      mappedTables.add(table);
+      const result = mapTable(table, source, offset);
+      if (!result) return [];
+      mapped.push(...result.cells);
+      offset = result.end;
+      continue;
+    }
     let prefix;
     if (/^H[1-6]$/.test(field.tagName)) prefix = /^\s*(?:#{1,6}[ \t]+)?/;
-    else if (field.matches("li,.lp-list-label")) prefix = /^\s*(?:[-*+]|\d+\.)[ \t]+/;
-    else if (field.matches("td,th")) {
-      if (field.cellIndex > 0) prefix = /^[ \t]*\|[ \t]*/;
-      else if (!offset) prefix = /^[ \t]*\|?[ \t]*/;
-      else prefix = /^[ \t]*\|?[ \t]*\n(?:[ \t|:\-]+\n)?[ \t]*\|?[ \t]*/;
-    }
+    else if (field.matches("li,.lp-list-label,li > p:first-child")) prefix = listMarkerPrefix;
     else prefix = field.closest("blockquote") ? /^\s*(?:>[ \t]?)+/ : /^\s*/;
     const start = source.slice(offset).match(prefix);
     if (!start) return [];
@@ -242,12 +392,14 @@ function mapFields(view, source) {
   return /^(?:[\s#|:=\-]*|\s*\{[^{}\n]*\}\s*)$/.test(source.slice(offset)) ? mapped : [];
 }
 
-export function prepareVisualBlock(view, source, onChange) {
+// onRevert：字段内容无法可靠地写回 Markdown 时调用，由调用方把这一块恢复成上一次已知的源码。
+export function prepareVisualBlock(view, source, onChange, onRevert) {
   const html = htmlFields(view, source);
   const fields = html.length ? html : mapFields(view, source);
   for (const entry of fields) {
     const field = entry.field;
     field.contentEditable = entry.serialize ? "plaintext-only" : "true";
+    disableTextSubstitution(field);
     field.setAttribute("role", "textbox");
     field.setAttribute("aria-label", "编辑正文");
     field.addEventListener("paste", event => {
@@ -259,13 +411,21 @@ export function prepareVisualBlock(view, source, onChange) {
       if (event.inputType.startsWith("format") || event.inputType.includes("List")) event.preventDefault();
     });
     field.addEventListener("input", () => {
+      // 浏览器重建图片、公式节点后可能丢掉不可编辑标记
+      for (const atom of field.querySelectorAll("[data-lp-atom]")) {
+        if (atom.getAttribute("contenteditable") !== "false") atom.contentEditable = "false";
+      }
       let paragraphBreak = "\n\n";
       if (field.matches("td,th")) paragraphBreak = "<br>";
-      else if (field.matches("li,.lp-list-label")) {
+      else if (field.matches("li,.lp-list-label,li > p")) {
         const lineStart = source.lastIndexOf("\n", entry.from - 1) + 1;
-        paragraphBreak = "\n" + source.slice(lineStart, entry.from);
+        paragraphBreak = (field.tagName === "P" ? "\n\n" : "\n") + source.slice(lineStart, entry.from);
       } else if (field.closest("blockquote")) paragraphBreak = "\n> ";
       const markdown = entry.serialize ? entry.serialize() : inlineMarkdown(field, paragraphBreak);
+      if (markdown === null) {
+        onRevert();
+        return;
+      }
       entry.value = field.innerHTML === "<br>" ? "" : markdown;
       let end = 0;
       const parts = [];
@@ -276,12 +436,20 @@ export function prepareVisualBlock(view, source, onChange) {
       onChange(parts.join("") + source.slice(end));
     });
   }
-  if (!fields.length) prepareStructured(view, source, onChange);
+  const controls = fields.length ? null : prepareStructured(view, source, onChange);
+  appendBlockTools(view, controls, !fields.length);
+}
+
+// 块右上角的操作区：「源码」按钮，可选的「编辑…」控件。sourceOnly 时按钮常显。
+export function appendBlockTools(view, controls, sourceOnly) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "lp-edit-source";
   button.textContent = "源码";
-  button.classList.toggle("source-only", !fields.length);
+  button.classList.toggle("source-only", sourceOnly);
   button.setAttribute("aria-label", "编辑此段 Markdown 源码");
-  view.appendChild(button);
+  const tools = document.createElement("div");
+  tools.className = "lp-block-tools";
+  tools.append(...(controls ? [controls, button] : [button]));
+  view.appendChild(tools);
 }

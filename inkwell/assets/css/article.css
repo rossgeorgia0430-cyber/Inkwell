@@ -284,7 +284,7 @@
 /* 启动首帧：重型 Markdown / base64 图片在后台渲染时保持窗口立即可用。 */
 .initial-loading {
   min-height: 46vh; display: flex; align-items: center; justify-content: center; gap: 10px;
-  color: var(--muted); font-size: .92em; user-select: none;
+  color: var(--muted); font-size: .92em; -webkit-user-select: none; user-select: none;
 }
 .initial-loading-spinner {
   width: 16px; height: 16px; border-radius: 50%;

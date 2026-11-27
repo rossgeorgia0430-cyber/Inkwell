@@ -135,16 +135,26 @@ export function buildCopyPayload(sel) {
   return { html: html, plain: plain };
 }
 
+// 把选区净化后写进剪贴板并接管事件；没有可写的内容返回 false。
+function writeCleanSelection(e) {
+  var p = buildCopyPayload(window.getSelection());
+  if (!p || !e.clipboardData) return false;
+  e.clipboardData.setData("text/html", p.html);
+  e.clipboardData.setData("text/plain", p.plain);
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  return true;
+}
+
+// 编辑区里剪切也走同样的净化，否则图片的复制按钮文字会混进剪贴板；接管后要自己删掉选区。
+export function onCut(e) {
+  if (!state.editMode || (e.target.closest && e.target.closest("textarea, input"))) return;
+  if (writeCleanSelection(e)) document.execCommand("delete");
+}
+
 export function onCopy(e) {
   try {
-    var p = buildCopyPayload(window.getSelection());
-    if (p && e.clipboardData) {
-      e.clipboardData.setData("text/html", p.html);
-      e.clipboardData.setData("text/plain", p.plain);
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      return;
-    }
+    if (writeCleanSelection(e)) return;
     // 图片被点击或通过 Tab 聚焦后，Ctrl+C 直接复制像素内容而非图片 URL。
     if (state.selectedImage && state.selectedImage.isConnected) {
       e.preventDefault();

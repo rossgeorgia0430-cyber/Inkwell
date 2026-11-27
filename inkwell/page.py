@@ -6,10 +6,13 @@ Inkwell - 页面组装
 以规避 WebView2 NavigateToString ~2MB 上限并让 KaTeX 字体相对路径可解析。
 """
 
+import functools
 import html as html_module
 import json
 import secrets
 import sys
+
+from .server import ASSET_ROOT
 
 
 # 无边框标题栏 + 侧栏 + 正文 + 搜索覆盖层 的整体骨架
@@ -65,6 +68,10 @@ _SHELL = """
       <div class="article-wrap" id="articleWrap">
         <article class="article" id="content">__CONTENT__</article>
         <section class="editor-pane" id="editorPane" hidden aria-label="文档编辑器">
+          <!-- Obsidian 风格：在最终渲染效果中块级编辑；完整源码缓冲在 JS 里是字符串，不落 DOM -->
+          <div class="editor-live-wrap" id="editorLiveWrap">
+            <div class="editor-live article" id="editorLive" tabindex="0" aria-label="所见即所得编辑区"></div>
+          </div>
           <div class="editor-toolbar" id="editorToolbar">
             <div class="editor-toolbar-left">
               <button type="button" class="edit-tool-btn outline" id="editSaveBtn" title="保存" data-shortcut="mod+S">保存</button>
@@ -77,16 +84,12 @@ _SHELL = """
               <button type="button" class="edit-tool-btn" id="editInsertMermaidBtn" title="插入流程图">流程图</button>
               <button type="button" class="edit-tool-btn" id="editInsertMathBtn" title="插入公式">公式</button>
               <span class="edit-tool-sep" aria-hidden="true"></span>
-              <button type="button" class="edit-tool-btn" id="editDeleteImageBtn" title="删除光标处图片">删除图片</button>
+              <button type="button" class="edit-tool-btn" id="editDeleteImageBtn" title="删除光标处或选中的图片">删除图片</button>
             </div>
             <div class="editor-toolbar-right">
               <span class="editor-status" id="editorStatus" aria-live="polite"></span>
               <button type="button" class="edit-tool-btn outline" id="editExitBtn" title="退出编辑 (Esc)">完成</button>
             </div>
-          </div>
-          <!-- Obsidian 风格：在最终渲染效果中块级编辑；完整源码缓冲在 JS 里是字符串，不落 DOM -->
-          <div class="editor-live-wrap" id="editorLiveWrap">
-            <div class="editor-live article" id="editorLive" tabindex="0" aria-label="所见即所得编辑区"></div>
           </div>
         </section>
       </div>
@@ -121,6 +124,15 @@ def script_safe_json(value) -> str:
             .replace(">", r"\u003e")
             .replace("\u2028", r"\u2028")
             .replace("\u2029", r"\u2029"))
+
+
+@functools.lru_cache(maxsize=None)
+def _module_preload_links() -> str:
+    """前端模块逐层 import 会形成请求瀑布；在 head 里一次性预加载，缩短桥注入前的等待。"""
+    js_root = ASSET_ROOT / "js"
+    return "\n".join(
+        f'<link rel="modulepreload" href="/assets/js/{path.relative_to(js_root).as_posix()}">'
+        for path in sorted(js_root.rglob("*.js")))
 
 
 def build_page(content_html: str, toc_html: str, title: str, path: str = None,
@@ -173,6 +185,7 @@ def build_page(content_html: str, toc_html: str, title: str, path: str = None,
 <link rel="stylesheet" href="/assets/css/article.css">
 <link rel="stylesheet" href="/assets/css/viewer.css">
 <link rel="stylesheet" href="/assets/css/editor.css">
+{_module_preload_links()}
 </head>
 <body>
 {shell}

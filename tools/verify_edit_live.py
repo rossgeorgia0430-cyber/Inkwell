@@ -74,6 +74,231 @@ Mixed __style__, $a+b$ and ![inline](images/pixel.png) end.
 """
 
 
+# 表格与宽松列表的各种写法：不改动时回写全文必须与原文相同；改某个可编辑字段时只多出一处插入，
+# 且落在该字段所在的块里。名字 -> (原文, 可直接编辑的单元格数, 单元格总数)
+FIDELITY_CASES = {
+    "对齐空格": ("| 名称   | 类型  |\n| ------ | ----- |\n| id     | int   |\n| name   | str   |", 6, 6),
+    "无首尾竖线": ("名称 | 类型\n--- | ---\nid | int", 4, 4),
+    "换行标签": ("| 键 | 值 |\n| --- | --- |\n| 多行 | 一<br>二 |", 4, 4),
+    "自闭合换行": ("| 键 | 值 |\n| --- | --- |\n| 甲 | 一<br/>二 |\n| 乙 | 三<BR />四 |", 6, 6),
+    "行内标签": ("| 键 | 值 |\n| --- | --- |\n| 颜色 | <span>红</span> 与 <kbd>Ctrl</kbd> |", 3, 4),
+    "实体": ("| 键 | 值 |\n| --- | --- |\n| 空格 | a&nbsp;b &lt;x&gt; |", 4, 4),
+    "转义竖线与代码竖线": ("| 键 | 值 |\n| --- | --- |\n| 竖线 | a \\| b |\n| 代码 | `a\\|b` 与 `x|y` |", 6, 6),
+    "自动链接": ("| 键 | 值 |\n| --- | --- |\n| 链接 | <https://example.org> |", 3, 4),
+    "尖括号文本": ("| 键 | 值 |\n| --- | --- |\n| 泛型 | Map<K, V> 与 a < b |", 3, 4),
+    "单元格不齐": ("| 甲 | 乙 | 丙 |\n| --- | --- | --- |\n| 1 | 2 |\n| 3 |", 6, 9),
+    "空单元格": ("| 甲 | 乙 |\n| --- | --- |\n|  | 2 |\n| 3 |  |", 6, 6),
+    "缩进与不规则空格": ("  | a  |   b |\n  |---|:-:|\n  | c |  d  |\n  | e | f", 6, 6),
+    "公式与货币": ("| 键 | 值 |\n| --- | --- |\n| 范数 | $a+b$ 与 $5 到 $10 |", 4, 4),
+    "混排": ("| 键 | 值 |\n| --- | --- |\n| 代码 | **`T<K>`** 与 ~~旧~~ [文档](https://e.com \"标题\") |", 4, 4),
+    "图片单元格": ("| 键 | 值 |\n| --- | --- |\n| 图 | ![icon](images/pixel.png) |", 4, 4),
+}
+FIDELITY_LISTS = {
+    "宽松无序": "- a\n\n- b\n\n- c",
+    "宽松有序": "1. a\n\n2. b\n\n3. c",
+    "混用无序符号": "- a\n\n* b\n\n+ c",
+    "宽松嵌套": "- a\n\n    - x\n\n    - y\n\n- b",
+    "宽松多段": "- a\n\n    more\n\n- b",
+}
+
+
+def fidelity_doc():
+    parts = []
+    for name, (source, _, _) in FIDELITY_CASES.items():
+        parts += ["### " + name, source]
+    for name, source in FIDELITY_LISTS.items():
+        parts += ["### " + name, source]
+    return "\n\n".join(parts) + "\n"
+
+
+FIDELITY_JS = r"""
+((doc) => {
+  const edit = window.__ink.edit;
+  const root = document.querySelector('#editorLive');
+  const flat = text => text.replace(/\r\n/g, '\n');
+  const original = edit.getText();
+  const blocks = edit.splitBlocks(original).map(block => block.text);
+  const problems = [];
+  if (original !== doc) problems.push('不改动时回写全文与原文不同');
+  const editableSelector = '[contenteditable="true"],[contenteditable="plaintext-only"]';
+  const fields = [...root.querySelectorAll(editableSelector)].filter(el => !el.parentElement.closest(editableSelector));
+  const source = flat(original);
+  for (const el of fields) {
+    const index = Number(el.closest('.lp-block').dataset.idx);
+    const start = source.indexOf(blocks[index]);
+    const node = document.createTextNode('Z');
+    el.appendChild(node);
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    const edited = flat(edit.getText());
+    node.remove();
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    let at = 0;
+    while (at < source.length && source[at] === edited[at]) at++;
+    const label = blocks[index].slice(0, 30) + ' / ' + el.tagName;
+    if (edited.length !== source.length + 1 || edited[at] !== 'Z' || edited.slice(0, at) + edited.slice(at + 1) !== source) {
+      problems.push('改一个字段后不只多出一处插入：' + label);
+    } else if (at < start || at > start + blocks[index].length) {
+      problems.push('插入落到了块外：' + label);
+    }
+    if (edit.getText() !== original) problems.push('撤销改动后全文与原文不同：' + label);
+  }
+  const tables = [...root.querySelectorAll('table')].map(table => {
+    const cells = [...table.querySelectorAll('th,td')];
+    const block = table.closest('.lp-block');
+    return {
+      name: blocks[Number(block.dataset.idx) - 1].replace('### ', ''),
+      cells: cells.length,
+      editable: cells.filter(cell => cell.isContentEditable).length,
+      leaked: cells.filter(cell => !cell.isContentEditable && cell.hasAttribute('contenteditable')).length,
+    };
+  });
+  const lists = [...root.querySelectorAll('.lp-block')].filter(b => b.querySelector('ul,ol')).map(block => ({
+    name: blocks[Number(block.dataset.idx) - 1].replace('### ', ''),
+    paragraphs: block.querySelectorAll('li > p').length,
+    editable: block.querySelectorAll('li > p[contenteditable]').length,
+  }));
+  return {problems, tables, lists};
+})(__DOC__)
+"""
+
+
+def _noisy_png_uri(chars, color):
+    """约 chars 个字符的 PNG data URI：附加不可压缩的辅助块把体积撑够。"""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    row = b"\x00" + bytes(color) * 8
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0))
+           + chunk(b"prVt", os.urandom(chars * 3 // 4)) + chunk(b"IDAT", zlib.compress(row * 8)) + chunk(b"IEND", b""))
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+
+
+def select_image(window, alt):
+    """单击图片：只选中并给出选中框，不打开灯箱。"""
+    js(window, """(() => {
+        const img = document.querySelector('#editorLive img[alt=%s]');
+        for (const type of ['mousedown', 'mouseup', 'click'])
+            img.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true}));
+    })()""" % alt)
+    assert js(window, "document.querySelector('#editorLive img[alt=%s]').classList.contains('is-selected')" % alt), "单击后没有选中框"
+    assert not js(window, "window.__ink.image.state().open"), "编辑态单击不该打开灯箱"
+
+
+def check_embedded_images(window, res):
+    """含大 data URI 的块：可直接编辑、不改动时全文不变、删除选中的独立图片、源码框折叠、回车退格不丢图。"""
+    inline = _noisy_png_uri(1_000_000, (200, 40, 40))
+    solo = _noisy_png_uri(300_000, (40, 200, 40))
+    tiny = _noisy_png_uri(0, (10, 10, 10))
+    blocks = [
+        "# 图片阶段",
+        "前文 ![inl](%s) 后文说明" % inline,
+        "![solo](%s)" % solo,
+        "甲 ![a](%s) 乙 ![b](%s)" % (tiny, tiny),
+        "尾段",
+    ]
+    doc = "\n\n".join(blocks) + "\n"
+    js(window, "document.querySelectorAll('#editorLive img').forEach(i => i.dataset.stale = '1')")
+    js(window, "window.__ink.edit.setText(%s)" % json.dumps(doc))
+    assert wait_js(window, "document.querySelectorAll('#editorLive img[alt=inl]:not([data-stale])').length === 1", timeout=60)
+    assert js(window, "window.__ink.edit.getText()") == doc, "不改动时回写全文与原文不同"
+    editable = "#editorLive .lp-block[data-idx=\"%d\"] [contenteditable=\"true\"]"
+    assert js(window, "!!document.querySelector(%s)" % json.dumps(editable % 1)), "含大图片的段落不能直接编辑"
+
+    # 回车再退格：图片语法留在源码里，界面控件文字不能混进正文
+    assert js(window, r"""
+(() => {
+  const field = document.querySelector(%s);
+  field.focus();
+  const range = document.createRange();
+  range.setStart(field.firstChild, 1); range.collapse(true);
+  const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+  document.execCommand('insertParagraph');
+  document.execCommand('delete');
+  const text = window.__ink.edit.getText();
+  return text.includes('![inl](' + %s + ')') && !text.includes('复制');
+})()
+""" % (json.dumps(editable % 1), json.dumps(inline)))
+
+    # 删除选中的独立图片：只去掉那一块
+    js(window, "document.querySelectorAll('#editorLive img').forEach(i => i.dataset.stale = '1')")
+    js(window, "window.__ink.edit.setText(%s)" % json.dumps(doc))
+    assert wait_js(window, "document.querySelectorAll('#editorLive img[alt=solo]:not([data-stale])').length === 1", timeout=60)
+    select_image(window, "solo")
+    js(window, "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Delete', bubbles: true, cancelable: true}))")
+    js(window, "window.__expected = %s" % json.dumps(doc.replace(blocks[2] + "\n\n", "")))
+    assert wait_js(window, "window.__ink.edit.getText() === window.__expected", timeout=30), "删除选中的独立图片后全文不对: " + js(window, "JSON.stringify([document.activeElement.tagName, document.activeElement.isContentEditable, !!window.__ink.image.selected(), document.getElementById('editorStatus').textContent, window.__ink.edit.getText().length])")
+
+    # 段落里的行内图片：单击选中后 Delete，只去掉那一处
+    js(window, "document.querySelectorAll('#editorLive img').forEach(i => i.dataset.stale = '1')")
+    js(window, "window.__ink.edit.setText(%s)" % json.dumps(doc))
+    assert wait_js(window, "document.querySelectorAll('#editorLive img[alt=inl]:not([data-stale])').length === 1", timeout=60)
+    select_image(window, "inl")
+    js(window, "document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Delete', bubbles: true, cancelable: true}))")
+    js(window, "window.__expected = %s" % json.dumps(doc.replace("![inl](%s)" % inline, "")))
+    assert wait_js(window, "window.__ink.edit.getText() === window.__expected", timeout=30), "删除选中的行内图片后全文不对"
+
+    # 粘贴：同时带文字和图片时按文字处理
+    assert js(window, r"""
+(() => {
+  const dt = new DataTransfer();
+  dt.setData('text/plain', '文字内容');
+  dt.items.add(new File([new Uint8Array(8)], 'x.png', {type: 'image/png'}));
+  const event = new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true});
+  const target = document.querySelector('#editorLive [contenteditable="true"]');
+  target.focus();
+  target.dispatchEvent(event);
+  return !!target.isConnected;
+})()
+""")
+    assert not js(window, "window.__ink.edit.getText().includes('粘贴的图片')"), "文字加图片的粘贴被当成了图片"
+
+    # 源码框折叠：进出一次全文不变，改说明后其余原样
+    js(window, "document.querySelectorAll('#editorLive img').forEach(i => i.dataset.stale = '1')")
+    js(window, "window.__ink.edit.setText(%s)" % json.dumps(doc))
+    assert wait_js(window, "document.querySelectorAll('#editorLive img[alt=inl]:not([data-stale])').length === 1", timeout=60)
+    js(window, "window.__ink.edit.activate(1)")
+    assert wait_js(window, "window.__ink.edit.state().active === 1")
+    shown = js(window, "document.querySelector('.lp-block.is-active textarea.lp-source').value")
+    assert len(shown) < 500 and "内嵌数据 #" in shown, shown[:200]
+    js(window, "window.__ink.edit.deactivate()")
+    assert wait_js(window, "window.__ink.edit.state().active === -1")
+    assert js(window, "window.__ink.edit.getText()") == doc, "进源码再退出后全文变了"
+    js(window, "window.__ink.edit.activate(1)")
+    assert wait_js(window, "window.__ink.edit.state().active === 1")
+    js(window, """(() => { const ta = document.querySelector('.lp-block.is-active textarea.lp-source');
+        ta.value = ta.value.replace('前文', '改动'); ta.dispatchEvent(new Event('input', {bubbles: true})); })()""")
+    js(window, "window.__ink.edit.deactivate()")
+    js(window, "window.__expected = %s" % json.dumps(doc.replace("前文", "改动", 1)))
+    assert wait_js(window, "window.__ink.edit.getText() === window.__expected", timeout=30)
+    res["embedded_images"] = {"inline_chars": len(inline), "textarea_chars": len(shown)}
+
+
+def check_edit_fidelity(window, res):
+    doc = fidelity_doc()
+    expected_tables = len(FIDELITY_CASES)
+    for label, text in (("lf", doc), ("crlf", doc.replace("\n", "\r\n"))):
+        js(window, "document.querySelectorAll('#editorLive table').forEach(t => t.dataset.stale = '1')")
+        js(window, "window.__ink.edit.setText(%s)" % json.dumps(text))
+        assert wait_js(window, "document.querySelectorAll('#editorLive table:not([data-stale])').length === %d"
+                       % expected_tables), label
+        report = json_js(window, FIDELITY_JS.replace("__DOC__", json.dumps(text)))
+        res["fidelity_" + label] = report
+        assert not report["problems"], report["problems"]
+        found = {t["name"]: (t["editable"], t["cells"]) for t in report["tables"]}
+        for name, (_, editable, cells) in FIDELITY_CASES.items():
+            assert found.get(name) == (editable, cells), (name, found.get(name))
+        assert all(t["leaked"] == 0 for t in report["tables"]), report["tables"]
+        # 宽松列表在编辑态是同一个列表块，列表项都能直接编辑
+        for name, source in FIDELITY_LISTS.items():
+            items = [l for l in report["lists"] if l["name"] == name]
+            assert len(items) == 1, (name, report["lists"])
+            assert items[0]["editable"] == items[0]["paragraphs"] > 0, items[0]
+
+
 def wait_js(window, expression, timeout=20):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -92,6 +317,15 @@ def js(window, expression):
 
 def json_js(window, expression):
     return json.loads(window.evaluate_js("JSON.stringify(" + expression + ")"))
+
+
+def wait_until(predicate, timeout=5):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
 
 
 def wait_file_contains(path, needle, timeout=10):
@@ -274,7 +508,7 @@ def job(window, tmp_dir, doc_path):
         res["enter_state"] = st
         assert st["blocks"] >= 5, st
 
-        assert wait_js(window, "!!document.querySelector('#editorLive strong') && !document.querySelector('.lp-scroll-pending')")
+        assert wait_js(window, "!!document.querySelector('#editorLive strong')")
         with open(doc_path, "rb") as source_file:
             original = source_file.read()
         assert js(window, "window.__ink.edit.getText()").encode() == original
@@ -297,8 +531,13 @@ def job(window, tmp_dir, doc_path):
   return true;
 })()
 """)
+        # 有未保存修改时宿主窗口要开启关闭确认（Alt+F4 等绕过页面的关闭靠它拦截），保存后关掉。
+        res["confirm_close_on_dirty"] = wait_until(lambda: window.confirm_close is True)
+        assert res["confirm_close_on_dirty"], window.confirm_close
         js(window, "window.__ink.edit.save()")
         assert wait_js(window, "!window.__ink.edit.state().dirty")
+        res["confirm_close_off_after_save"] = wait_until(lambda: window.confirm_close is False)
+        assert res["confirm_close_off_after_save"], window.confirm_close
         assert js(window, "document.activeElement === window.__savedField && window.getSelection().anchorOffset === window.__savedOffset")
         with open(doc_path, "rb") as source_file:
             assert source_file.read() == original.replace(b"Live Preview**", "直接编辑**".encode())
@@ -415,6 +654,16 @@ def job(window, tmp_dir, doc_path):
         res["conflict_force_ok"] = found
         assert res["conflict_force_ok"], after_force[:200]
 
+        # ---- 表格与宽松列表：回写保真 ----
+        res["stage"] = "edit-fidelity"
+        check_edit_fidelity(window, res)
+        res["edit_fidelity_ok"] = True
+
+        # ---- 内嵌图片：大 data URI ----
+        res["stage"] = "embedded-images"
+        check_embedded_images(window, res)
+        res["embedded_images_ok"] = True
+
         # ---- 退出编辑：正文重新渲染 ----
         res["stage"] = "exit"
         js(window, "window.__ink.edit.exit()")
@@ -432,7 +681,9 @@ def job(window, tmp_dir, doc_path):
             and res["insert_code_ok"] and res["insert_math_ok"]
             and res["delete_image_ok"]
             and res["save_matches_disk"]
+            and res["confirm_close_on_dirty"] and res["confirm_close_off_after_save"]
             and res["conflict_reject_ok"] and res["conflict_force_ok"]
+            and res["edit_fidelity_ok"] and res["embedded_images_ok"]
             and res["exit_body_class_ok"] and res["exit_content_visible_ok"]
             and res["no_js_errors"]
         )
@@ -445,6 +696,7 @@ def job(window, tmp_dir, doc_path):
         with open(RESULT, "w", encoding="utf-8") as f:
             json.dump(res, f, ensure_ascii=False, indent=2)
         print(json.dumps({"stage": res.get("stage"), "all_pass": res.get("all_pass")}, ensure_ascii=False))
+        window.confirm_close = False  # 断言失败时仍处于有未保存修改状态，destroy 不能被确认框卡住
         try:
             window.destroy()
         except Exception:
