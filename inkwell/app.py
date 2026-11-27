@@ -163,7 +163,7 @@ def _create_window(api: Api, url):
         frameless=True,
         easy_drag=False,
         text_select=True,
-        background_color="#1E1D1A" if api.preferences.get("theme") == "dark" else "#F7F5EF",
+        background_color="#15171C" if api.preferences.get("theme") == "dark" else "#F8F9FB",
         confirm_close=False,
         zoomable=False,
     )

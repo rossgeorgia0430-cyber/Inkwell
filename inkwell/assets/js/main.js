@@ -3,7 +3,7 @@ import { state } from "./state.js";
 import { $, api, isMacPlatform, applyShortcutTitles } from "./util.js";
 import {
   setTheme, setDocTitle, onResize, setupWindowResize, setupWindowDrag, setupFontZoom,
-  setupResizer, toggleSidebar, bindChromeEvents,
+  setupResizer, toggleSidebar, closeDrawer, bindChromeEvents,
 } from "./chrome.js";
 import {
   initContent, onContentActionClick, clearVarHighlights, runSearch, nextHit,
@@ -80,6 +80,7 @@ function onGlobalKeydown(e) {
   else if (e.key === "Escape") {
     if (imageViewerIsOpen()) closeImageViewer();
     else if (state.searchBar.classList.contains("open")) closeSearch();
+    else if (state.app.classList.contains("sidebar-open")) closeDrawer();
     else clearVarHighlights();
   }
   else if (e.key === "F3") { e.preventDefault(); nextHit(e.shiftKey ? -1 : 1); }

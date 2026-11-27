@@ -7,72 +7,101 @@
   --sidebar-w: 270px;
   --radius: 10px;
   --radius-sm: 7px;
+  --radius-xs: 5px;
+  --zebra: color-mix(in srgb, var(--sidebar-bg) 70%, transparent);   /* 斑马纹：比正文底略深的半透明面，不与代码块底色撞 */
+  /* 图片灯箱永远是暗底，不随主题切换 */
+  --lightbox-bg: rgba(10,12,16,.88);
+  --lightbox-ctl: rgba(32,36,44,.94);
+  --lightbox-ctl-hover: rgba(52,58,70,.96);
+  --lightbox-line: rgba(255,255,255,.16);
+  --lightbox-hover: rgba(255,255,255,.10);
+  --lightbox-text: #e3e7ee;
+  --lightbox-text-strong: #ffffff;
+  --lightbox-text-soft: #b5bcc8;
+  --lightbox-text-faint: #8c96a6;
+  --lightbox-accent: #8fb0ff;
   --font-sans: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
   --speed: .18s;
   --reader-font: 15px;   /* 正文字号（Ctrl+滚轮缩放、localStorage 持久化）；默认基准（约 +10%） */
 }
 
-/* ---------- 主题：浅色（宣纸暖白 + 松绿点缀的书页质感）---------- */
+/* ---------- 主题：浅色（墨蓝：中性偏冷的纸面，蓝黑墨迹，唯一强调色是墨水蓝）---------- */
 :root, [data-theme="light"] {
-  --bg: #f7f5ef;             /* 阅读区：暖调纸面，避免冷白刺眼 */
-  --sidebar-bg: #f1efe8;     /* 目录栏：略沉的米灰，和正文自然分层 */
-  --surface: #f0ede5;        /* 代码头 / 引用底 */
-  --surface-2: #e7e3d8;      /* hover / 激活 */
-  --elevated: #fcfbf7;
-  --text: #33302a;           /* 正文：暖墨色，长时间阅读不疲劳 */
-  --text-strong: #1c1a15;    /* 加粗与标题：清晰，但不生硬 */
-  --text-soft: #4d4941;
-  --muted: #6f6a5e;
-  --faint: #9b9689;
-  --border: #e3dfd3;
-  --border-strong: #d0cbba;
-  --accent: #3f6e5b;         /* 松绿：仅用于交互与定位，不污染正文 */
-  --accent-hover: #315a49;
-  --accent-soft: rgba(63,110,91,.12);
-  --code-bg: #f3f1e9;
-  --code-border: #e1ddce;
-  --inline-code-bg: #ece9df;
-  --inline-code-fg: #42403a;
-  --mark: #f3e3ac;
-  --mark-current: #eac55e;
-  --var-hl: rgba(63,110,91,.13);
-  --var-hl-current: rgba(87,132,113,.38);
-  --shadow: 0 14px 34px rgba(64,56,36,.13);
-  --scroll: #c7c1b1;
-  --scroll-hover: #a29b87;
-  --selection: rgba(63,110,91,.17);
+  --bg: #f8f9fb;             /* 阅读区：几乎无色相的冷白纸面 */
+  --sidebar-bg: #f0f2f6;     /* 目录栏：略沉，和正文靠明度分层 */
+  --surface: #eff1f5;        /* 代码头 / 引用底 / 表头 */
+  --surface-2: #e5e8ee;      /* hover / 激活 */
+  --elevated: #ffffff;       /* 浮层：搜索条、按钮 */
+  --text: #252a31;           /* 正文：蓝黑墨色 */
+  --text-strong: #101419;    /* 标题与加粗 */
+  --text-soft: #3d444d;
+  --muted: #5a636e;          /* 次要文字 */
+  --faint: #858d98;          /* 仅用于占位符、禁用态、装饰，不用于需要阅读的文字 */
+  --border: #e2e5ea;
+  --border-strong: #cbd0d8;
+  --accent: #2f55c8;         /* 墨水蓝：只用于链接、当前项、焦点环、主按钮、选区 */
+  --accent-hover: #2445a8;
+  --accent-soft: rgba(47,85,200,.10);
+  --on-accent: #ffffff;
+  --code-bg: #f1f3f7;
+  --code-border: #e0e4ea;
+  --inline-code-bg: #e9ecf1;
+  --inline-code-fg: #2b3440;
+  --mark: #ffe58a;
+  --mark-current: #ffb938;
+  --on-mark-current: #101419;
+  --warn: #a8500a;
+  --ok: #187a33;
+  --danger: #c0352b;
+  --on-danger: #ffffff;
+  --scrim: rgba(16,20,25,.40);
+  --scroll-shade: rgba(20,28,45,.14);
+  --var-hl: rgba(47,85,200,.12);
+  --var-hl-current: rgba(47,85,200,.30);
+  --shadow: 0 12px 32px rgba(20,28,45,.12);
+  --scroll: #c8cdd5;
+  --scroll-hover: #a2a9b4;
+  --selection: rgba(47,85,200,.18);
 }
 
-/* ---------- 主题：深色（暖墨黑纸面 + 金墨点缀；去除冷灰蓝光感）---------- */
+/* ---------- 主题：深色（蓝黑墨底，强调色提亮为淡墨蓝）---------- */
 [data-theme="dark"] {
-  --bg: #1e1d1a;             /* 阅读区：暖墨黑，不死黑也不泛蓝 */
-  --sidebar-bg: #191814;     /* 侧栏略沉，保留结构 */
-  --surface: #272521;
-  --surface-2: #322f29;
-  --elevated: #2b2924;
-  --text: #d5d1c5;
-  --text-strong: #ede9db;
-  --text-soft: #b3afa2;
-  --muted: #8d897b;
-  --faint: #605d53;
-  --border: #333129;
-  --border-strong: #464337;
-  --accent: #c9a45f;
-  --accent-hover: #dcb978;
-  --accent-soft: rgba(201,164,95,.16);
-  --code-bg: #23221d;
-  --code-border: #3a372d;
-  --inline-code-bg: #2d2b26;
-  --inline-code-fg: #ddd8c8;
-  --mark: #56451d;
-  --mark-current: #93701f;
-  --var-hl: rgba(201,164,95,.22);
-  --var-hl-current: rgba(220,185,120,.42);
-  --shadow: 0 16px 44px rgba(0,0,0,.46);
-  --scroll: #423f36;
-  --scroll-hover: #5b5748;
-  --selection: rgba(201,164,95,.26);
+  --bg: #15171c;
+  --sidebar-bg: #111317;
+  --surface: #1c1f26;
+  --surface-2: #272b34;
+  --elevated: #20242c;
+  --text: #cfd4dc;
+  --text-strong: #eef1f5;
+  --text-soft: #aab1bc;
+  --muted: #8c96a6;
+  --faint: #5f6875;
+  --border: #262a32;
+  --border-strong: #363b46;
+  --accent: #8fb0ff;
+  --accent-hover: #adc5ff;
+  --accent-soft: rgba(143,176,255,.14);
+  --on-accent: #0f1420;
+  --code-bg: #1a1d23;
+  --code-border: #2a2e37;
+  --inline-code-bg: #252932;
+  --inline-code-fg: #d6dbe3;
+  --mark: #5a4a12;
+  --mark-current: #7f5e0a;
+  --on-mark-current: #ffffff;
+  --warn: #f0b674;
+  --ok: #7ed492;
+  --danger: #ff8f85;
+  --on-danger: #1a0b0a;
+  --scrim: rgba(0,0,0,.55);
+  --scroll-shade: rgba(0,0,0,.5);
+  --var-hl: rgba(143,176,255,.18);
+  --var-hl-current: rgba(143,176,255,.38);
+  --shadow: 0 16px 44px rgba(0,0,0,.5);
+  --scroll: #3a3f4a;
+  --scroll-hover: #525866;
+  --selection: rgba(143,176,255,.26);
 }
 
 * { box-sizing: border-box; }
@@ -88,6 +117,14 @@ html, body {
 }
 
 button { font-family: inherit; }
+
+/* 键盘焦点环：只在键盘导航时出现，鼠标点击不留痕迹 */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input:focus-visible { outline: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
 
 /* ============================================================
    滚动条 / 选区

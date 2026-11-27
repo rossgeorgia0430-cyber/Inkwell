@@ -16,14 +16,39 @@ function decodeMermaidSource(encoded) {
 }
 
 function mermaidTheme() {
-  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "neutral";
+  return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+}
+
+// 图示配色直接取自当前主题的 CSS 变量，保证与正文同一套颜色。
+function mermaidThemeVariables() {
+  var css = getComputedStyle(document.documentElement);
+  var v = function (name) { return css.getPropertyValue(name).trim(); };
+  return {
+    darkMode: mermaidTheme() === "dark",
+    background: v("--code-bg"),
+    fontFamily: v("--font-sans"),
+    primaryColor: v("--surface-2"),
+    primaryTextColor: v("--text"),
+    primaryBorderColor: v("--border-strong"),
+    secondaryColor: v("--surface"),
+    tertiaryColor: v("--surface"),
+    lineColor: v("--muted"),
+    textColor: v("--text"),
+    mainBkg: v("--surface-2"),
+    nodeBorder: v("--border-strong"),
+    clusterBkg: v("--surface"),
+    clusterBorder: v("--border-strong"),
+    edgeLabelBackground: v("--code-bg"),
+    titleColor: v("--text-strong"),
+  };
 }
 
 function configureMermaid(lib) {
   lib.initialize({
     startOnLoad: false,
     securityLevel: "strict",
-    theme: mermaidTheme(),
+    theme: "base",
+    themeVariables: mermaidThemeVariables(),
     flowchart: { htmlLabels: false, useMaxWidth: true },
   });
 }

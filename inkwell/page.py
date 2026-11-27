@@ -57,7 +57,7 @@ _SHELL = """
   </header>
 
   <div class="app" id="app">
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar" aria-label="目录">
       <div class="sidebar-head">目录</div>
       <nav class="toc" id="toc">__TOC__</nav>
     </aside>
@@ -67,18 +67,21 @@ _SHELL = """
         <section class="editor-pane" id="editorPane" hidden aria-label="文档编辑器">
           <div class="editor-toolbar" id="editorToolbar">
             <div class="editor-toolbar-left">
-              <button type="button" class="edit-tool-btn" id="editSaveBtn" title="保存" data-shortcut="mod+S">保存</button>
+              <button type="button" class="edit-tool-btn outline" id="editSaveBtn" title="保存" data-shortcut="mod+S">保存</button>
               <button type="button" class="edit-tool-btn" id="editRefreshBtn" title="刷新渲染" data-shortcut="mod+Shift+P">刷新</button>
-              <button type="button" class="edit-tool-btn" id="editInsertImageBtn" title="插入图片文件">插图</button>
-              <button type="button" class="edit-tool-btn" id="editEmbedImageBtn" title="内嵌图片 (data URI)">内嵌图</button>
-              <button type="button" class="edit-tool-btn" id="editDeleteImageBtn" title="删除光标处图片">删图</button>
-              <button type="button" class="edit-tool-btn" id="editInsertCodeBtn" title="插入代码块">代码</button>
+              <span class="edit-tool-sep" aria-hidden="true"></span>
+              <span class="edit-tool-label">插入</span>
+              <button type="button" class="edit-tool-btn" id="editInsertImageBtn" title="插入图片文件">图片</button>
+              <button type="button" class="edit-tool-btn" id="editEmbedImageBtn" title="内嵌图片 (data URI)">内嵌图片</button>
+              <button type="button" class="edit-tool-btn" id="editInsertCodeBtn" title="插入代码块">代码块</button>
               <button type="button" class="edit-tool-btn" id="editInsertMermaidBtn" title="插入流程图">流程图</button>
               <button type="button" class="edit-tool-btn" id="editInsertMathBtn" title="插入公式">公式</button>
-              <span class="editor-status" id="editorStatus" aria-live="polite"></span>
+              <span class="edit-tool-sep" aria-hidden="true"></span>
+              <button type="button" class="edit-tool-btn" id="editDeleteImageBtn" title="删除光标处图片">删除图片</button>
             </div>
             <div class="editor-toolbar-right">
-              <button type="button" class="edit-tool-btn ghost" id="editExitBtn" title="退出编辑 (Esc)">完成</button>
+              <span class="editor-status" id="editorStatus" aria-live="polite"></span>
+              <button type="button" class="edit-tool-btn outline" id="editExitBtn" title="退出编辑 (Esc)">完成</button>
             </div>
           </div>
           <!-- Obsidian 风格：在最终渲染效果中块级编辑；完整源码缓冲在 JS 里是字符串，不落 DOM -->
@@ -94,15 +97,15 @@ _SHELL = """
 
   <div class="searchbar" id="searchbar">
     <svg viewBox="0 0 24 24" class="ico search-ico"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-    <input type="text" id="searchInput" placeholder="搜索内容…" autocomplete="off" spellcheck="false">
+    <input type="text" id="searchInput" placeholder="搜索内容…" aria-label="搜索内容" autocomplete="off" spellcheck="false">
     <span class="search-count" id="searchCount"></span>
-    <button class="icon-btn sm" id="searchPrev" title="上一个">
+    <button class="icon-btn sm" id="searchPrev" title="上一个 (Shift+Enter)" aria-label="上一个">
       <svg viewBox="0 0 24 24" class="ico"><path d="M18 15l-6-6-6 6"/></svg>
     </button>
-    <button class="icon-btn sm" id="searchNext" title="下一个">
+    <button class="icon-btn sm" id="searchNext" title="下一个 (Enter)" aria-label="下一个">
       <svg viewBox="0 0 24 24" class="ico"><path d="M6 9l6 6 6-6"/></svg>
     </button>
-    <button class="icon-btn sm" id="searchClose" title="关闭 (Esc)">
+    <button class="icon-btn sm" id="searchClose" title="关闭 (Esc)" aria-label="关闭搜索">
       <svg viewBox="0 0 24 24" class="ico"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
   </div>

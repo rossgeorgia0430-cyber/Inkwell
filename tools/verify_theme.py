@@ -51,16 +51,16 @@ SNAPSHOT_JS = r"""
 
 EXPECT = {
     "light": {
-        "bg": "#f7f5ef", "text": "#33302a", "accent": "#3f6e5b",
-        "bodyBg": "rgb(247, 245, 239)",
-        "linkColor": "rgb(49, 90, 73)",       # accent-hover #315a49
-        "kwColor": "rgb(62, 107, 89)",        # 关键字松绿
+        "bg": "#f8f9fb", "text": "#252a31", "accent": "#2f55c8",
+        "bodyBg": "rgb(248, 249, 251)",
+        "linkColor": "rgb(47, 85, 200)",      # accent
+        "kwColor": "rgb(111, 66, 193)",       # 关键字紫 #6f42c1
     },
     "dark": {
-        "bg": "#1e1d1a", "text": "#d5d1c5", "accent": "#c9a45f",
-        "bodyBg": "rgb(30, 29, 26)",
-        "linkColor": "rgb(220, 185, 120)",    # accent-hover #dcb978
-        "kwColor": "rgb(214, 165, 111)",      # 关键字金 #d6a56f
+        "bg": "#15171c", "text": "#cfd4dc", "accent": "#8fb0ff",
+        "bodyBg": "rgb(21, 23, 28)",
+        "linkColor": "rgb(143, 176, 255)",    # accent
+        "kwColor": "rgb(196, 167, 255)",      # 关键字紫 #c4a7ff
     },
 }
 

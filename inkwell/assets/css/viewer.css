@@ -11,7 +11,7 @@
   display: inline-flex; align-items: center; gap: 5px;
   border: 1px solid var(--border-strong); background: var(--elevated);
   color: var(--text-soft); font-size: 12px; font-family: var(--font-sans);
-  padding: 4px 9px; border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.16);
+  padding: 4px 9px; border-radius: var(--radius-xs); box-shadow: 0 4px 14px rgba(0,0,0,.16);
   cursor: pointer; opacity: 0; pointer-events: none;
   transition: opacity var(--speed), background var(--speed), color var(--speed), border-color var(--speed);
 }
@@ -27,7 +27,7 @@
 /* 图片灯箱：点击正文图片后全屏查看，右上角操作与代码/公式复制保持同一手感。 */
 .image-viewer {
   position: fixed; inset: 0; z-index: 100;
-  background: rgba(12,12,11,.88); backdrop-filter: blur(8px);
+  background: var(--lightbox-bg); backdrop-filter: blur(8px);
   opacity: 0; pointer-events: none;
   transition: opacity var(--speed);
 }
@@ -36,7 +36,7 @@
   position: absolute; inset: 52px 0 62px;
   overflow: auto; padding: 0 24px; box-sizing: border-box;
   scrollbar-gutter: stable;
-  scrollbar-color: rgba(255,255,255,.24) transparent;
+  scrollbar-color: var(--lightbox-line) transparent;
   overscroll-behavior: contain;
 }
 .image-viewer-image {
@@ -52,21 +52,21 @@
 }
 .image-viewer-btn {
   height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 0 11px; border: 1px solid rgba(255,255,255,.18);
-  border-radius: 7px; background: rgba(38,37,34,.92); color: #e9e6dd;
+  padding: 0 11px; border: 1px solid var(--lightbox-line);
+  border-radius: var(--radius-sm); background: var(--lightbox-ctl); color: var(--lightbox-text);
   font-family: var(--font-sans); font-size: 12px; cursor: pointer;
   transition: background var(--speed), color var(--speed), border-color var(--speed);
 }
-.image-viewer-btn:hover { background: rgba(60,58,53,.96); color: #fff; border-color: rgba(255,255,255,.28); }
-.image-viewer-btn.copied { color: #e1bd82; border-color: rgba(225,189,130,.65); }
+.image-viewer-btn:hover { background: var(--lightbox-ctl-hover); color: var(--lightbox-text-strong); }
+.image-viewer-btn.copied { color: var(--lightbox-accent); border-color: var(--lightbox-accent); }
 .image-viewer-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .image-viewer-close { width: 34px; padding: 0; }
 .image-viewer-zoom {
   position: fixed; left: 50%; bottom: 14px; z-index: 102;
   display: flex; align-items: center; gap: 5px;
   height: 38px; padding: 0 6px;
-  border: 1px solid rgba(255,255,255,.16); border-radius: 9px;
-  background: rgba(38,37,34,.94); color: #e9e6dd;
+  border: 1px solid var(--lightbox-line); border-radius: var(--radius-sm);
+  background: var(--lightbox-ctl); color: var(--lightbox-text);
   box-shadow: 0 8px 30px rgba(0,0,0,.32);
   transform: translateX(-50%);
 }
@@ -76,11 +76,11 @@
   border: none; border-radius: 6px; background: transparent; color: inherit;
   cursor: pointer; transition: background var(--speed), color var(--speed), opacity var(--speed);
 }
-.image-zoom-btn:hover { background: rgba(255,255,255,.10); color: #fff; }
+.image-zoom-btn:hover { background: var(--lightbox-hover); color: var(--lightbox-text-strong); }
 .image-zoom-btn:disabled { opacity: .32; cursor: default; }
 .image-zoom-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.image-zoom-level { min-width: 48px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; color: #c9c5bb; user-select: none; }
-.image-zoom-hint { font-size: 11px; color: #8f8b81; padding: 0 6px 0 2px; user-select: none; }
+.image-zoom-level { min-width: 48px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--lightbox-text-soft); user-select: none; }
+.image-zoom-hint { font-size: 11px; color: var(--lightbox-text-faint); padding: 0 6px 0 2px; user-select: none; }
 .image-viewer-open .main { overflow: hidden; }
 
 /* 灯箱内的 SVG 图示（与 .image-viewer-image 共用同一套缩放/滚动体系）。 */

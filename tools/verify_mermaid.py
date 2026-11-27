@@ -82,7 +82,7 @@ def probe(window, result):
             window.evaluate_js("document.getElementById('themeBtn').click()")
             assert wait_js(
                 window,
-                "document.querySelector('.mermaid-block').getAttribute('data-mermaid-rendered-theme') === 'neutral'",
+                "document.querySelector('.mermaid-block').getAttribute('data-mermaid-rendered-theme') === 'light'",
             )
         window.evaluate_js("document.getElementById('themeBtn').click()")
         assert wait_js(window, "document.documentElement.getAttribute('data-theme') === 'dark'")

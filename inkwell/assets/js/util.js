@@ -78,7 +78,7 @@ export function savePreference(key, value) {
 
 export function toast(msg) {
   var t = $("toast");
-  if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; document.body.appendChild(t); }
+  if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; t.setAttribute("role", "status"); document.body.appendChild(t); }
   t.textContent = msg;
   t.classList.add("show");
   clearTimeout(state.toastTimer);

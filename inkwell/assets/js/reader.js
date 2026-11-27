@@ -369,6 +369,11 @@ export function bindReaderEvents() {
     if (state.searchBar.classList.contains("open")) closeSearch(); else openSearch();
   });
   state.toc.addEventListener("click", onTocClick);
+  // 目录项过长被省略号截断时，悬停显示完整标题
+  state.toc.addEventListener("mouseover", function (e) {
+    var a = e.target.closest("a");
+    if (a && !a.title && a.scrollWidth > a.clientWidth) a.title = a.textContent;
+  });
   state.main.addEventListener("scroll", onScrollSpy, { passive: true });
   state.main.addEventListener("scrollend", unlockSpy);   // 平滑滚动结束即解锁 spy
   state.content.addEventListener("dblclick", onDblClick);

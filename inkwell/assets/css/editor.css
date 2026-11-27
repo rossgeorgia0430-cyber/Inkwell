@@ -48,7 +48,7 @@ body.edit-mode .tb-title.dirty::before {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   user-select: none;
@@ -58,12 +58,23 @@ body.edit-mode .tb-title.dirty::before {
 .editor-toolbar-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
   flex-wrap: wrap;
 }
+.editor-toolbar-right { gap: 10px; flex-wrap: nowrap; }
+.edit-tool-label {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 4px 0 2px;
+}
+.edit-tool-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 8px;
+  background: var(--border-strong);
+}
 .editor-status {
-  margin-left: 8px;
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
@@ -71,18 +82,19 @@ body.edit-mode .tb-title.dirty::before {
   text-overflow: ellipsis;
   max-width: 28vw;
 }
-.editor-status.warn { color: #c47b2b; }
-.editor-status.ok { color: var(--accent); }
+.editor-status.warn { color: var(--warn); }
+.editor-status.ok { color: var(--ok); }
 
+/* 工具栏按钮默认无边框，只有「保存」与「完成」带描边；有未保存修改时 JS 给「保存」加 .primary 填色 */
 .edit-tool-btn {
   height: 28px;
   padding: 0 10px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--elevated);
+  background: transparent;
   color: var(--text-soft);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
   transition: background var(--speed), color var(--speed), border-color var(--speed);
@@ -90,23 +102,15 @@ body.edit-mode .tb-title.dirty::before {
 .edit-tool-btn:hover {
   background: var(--surface-2);
   color: var(--text);
-  border-color: var(--border-strong);
 }
 .edit-tool-btn:active { transform: translateY(.5px); }
-.edit-tool-btn.ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--muted);
-}
-.edit-tool-btn.ghost:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
+.edit-tool-btn.outline { border-color: var(--border-strong); }
 .edit-tool-btn.primary {
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-  color: var(--accent-hover);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
+.edit-tool-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
 
 /* 单栏 live 编辑面：与阅读态相同的正文宽度与排版 */
 .editor-live-wrap {
@@ -123,7 +127,7 @@ body.edit-mode .tb-title.dirty::before {
 }
 .editor-live {
   width: 100%;
-  max-width: clamp(46rem, 76vw, 84rem);
+  max-width: clamp(46rem, 76vw, 64rem);
   margin: 0 auto;
   padding: clamp(20px, 3vw, 48px) clamp(18px, 3vw, 46px) 140px;
   font-size: var(--reader-font);
@@ -298,7 +302,7 @@ body.edit-mode .tb-title.dirty::before {
 }
 
 @media (max-width: 900px) {
-  .editor-status { max-width: 40vw; }
+  .editor-status { max-width: 30vw; }
   .edit-tool-btn { padding: 0 8px; }
   .lp-block:hover:not(.is-active)::before,
   .lp-block.is-active::before {
